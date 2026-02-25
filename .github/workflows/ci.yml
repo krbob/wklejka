@@ -1,0 +1,113 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_PORT: 3000
+  TEST_URLS: |
+    /
+    /api/boards
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t wklejka:test .
+
+      - name: Run container
+        run: docker run -d --name app -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" wklejka:test
+
+      - name: Wait until all endpoints return 200
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+          IFS=$'\n' read -r -d '' -a URLS < <(printf '%s\0' "${{ env.TEST_URLS }}")
+          echo "Checking ${#URLS[@]} endpoint(s)..."
+
+          wait_for_200() {
+            local url="$1"
+            echo "→ Waiting for 200 from: $url"
+            for i in $(seq 1 30); do
+              if curl -fsS --max-time 2 "$url" > /dev/null; then
+                echo "✅ 200 from: $url"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "❌ No 200 response within 30s from: $url"
+            return 1
+          }
+
+          failures=0
+          for raw in "${URLS[@]}"; do
+            url="${base}${raw}"
+            if ! wait_for_200 "$url"; then
+              failures=$((failures+1))
+            fi
+          done
+
+          if [[ $failures -gt 0 ]]; then
+            echo "Container logs:"
+            docker logs app || true
+            exit 1
+          fi
+          echo "All endpoints responded with 200"
+
+      - name: Smoke test clip creation
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+
+          curl -fsS -X POST "${base}/api/boards/default/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"text","content":"ci test"}' | grep -q '"type":"text"'
+
+          curl -fsS "${base}/api/boards/default/clips" | grep -q '"ci test"'
+
+          echo "Smoke test passed"
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f app || true
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and push image
+        run: |
+          set -e
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          IMAGE="ghcr.io/${OWNER}/${REPO}"
+          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+
+          docker build -t "${IMAGE}:${SHA_TAG}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${SHA_TAG}"
+          docker push "${IMAGE}:latest"
