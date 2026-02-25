@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wklejka</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📋</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Wklejka</h1>
+      <span class="subtitle">schowek w sieci</span>
+    </div>
+    <div id="status" class="status offline"></div>
+  </header>
+
+  <nav id="tabs"></nav>
+
+  <main>
+    <div class="paste-area">
+      <textarea id="text-input" placeholder="Wpisz lub wklej tekst tutaj..." rows="3"></textarea>
+      <div class="paste-actions">
+        <span class="hint">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
+        <button id="send-btn" class="btn btn-primary">Wy&#347;lij</button>
+      </div>
+    </div>
+
+    <div id="clips"></div>
+  </main>
+
+  <div id="drop-overlay" class="drop-overlay">
+    <div class="drop-overlay-content">
+      <div class="drop-icon">&#128206;</div>
+      <p>Upu&#347;&#263; obrazek tutaj</p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
