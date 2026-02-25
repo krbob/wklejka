@@ -4,6 +4,8 @@
 
 Lightweight, browser-based shared clipboard. Paste text or an image on one computer and instantly pick it up on another. Real-time sync via WebSocket, no sign-up required.
 
+![screenshot](screenshot.png)
+
 ## Getting started
 
 1. Make sure Docker is installed.
