@@ -268,6 +268,7 @@ function renderClips() {
     typeLabel.textContent = clip.type === 'image' ? t('image') : t('text');
     const time = document.createElement('span');
     time.textContent = timeAgo(clip.createdAt);
+    time.dataset.ts = clip.createdAt;
     header.appendChild(typeLabel);
     header.appendChild(time);
     el.appendChild(header);
@@ -458,3 +459,10 @@ function showToast(msg) {
 updateStaticTexts();
 connectWS();
 loadBoards().then(() => loadClips());
+
+// Refresh time labels every 30s
+setInterval(() => {
+  document.querySelectorAll('[data-ts]').forEach(el => {
+    el.textContent = timeAgo(Number(el.dataset.ts));
+  });
+}, 30000);
