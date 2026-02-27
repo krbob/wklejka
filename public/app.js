@@ -341,7 +341,7 @@ function renderClips() {
       content.appendChild(fileInfo);
     } else {
       const pre = document.createElement('pre');
-      pre.textContent = clip.content;
+      pre.innerHTML = linkify(clip.content);
       content.appendChild(pre);
     }
     el.appendChild(content);
@@ -503,6 +503,11 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function linkify(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
 
 function formatSize(bytes) {

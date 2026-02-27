@@ -274,6 +274,15 @@ main {
   margin: 0;
 }
 
+.clip-content pre a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.clip-content pre a:hover {
+  text-decoration: underline;
+}
+
 .clip-content img {
   max-width: 100%;
   border-radius: 8px;
