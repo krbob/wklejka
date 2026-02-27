@@ -22,7 +22,7 @@ docker compose up -d
 
 ## Features
 
-- **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB.
+- **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB. Inline preview for PDFs, videos, and audio.
 - **Real-time sync** – WebSocket instantly propagates changes to every open browser.
 - **Tabs** – separate virtual documents (e.g. "Work", "Home").
 - **Copy / Download / Delete** – on every entry.

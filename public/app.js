@@ -339,6 +339,26 @@ function renderClips() {
       fileInfo.appendChild(nameSpan);
       fileInfo.appendChild(sizeSpan);
       content.appendChild(fileInfo);
+      const ext = (clip.originalName || '').toLowerCase().split('.').pop();
+      if (ext === 'pdf') {
+        const embed = document.createElement('embed');
+        embed.src = clip.fileUrl;
+        embed.type = 'application/pdf';
+        embed.className = 'pdf-preview';
+        content.appendChild(embed);
+      } else if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
+        const video = document.createElement('video');
+        video.src = clip.fileUrl;
+        video.controls = true;
+        video.className = 'media-preview';
+        content.appendChild(video);
+      } else if (['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(ext)) {
+        const audio = document.createElement('audio');
+        audio.src = clip.fileUrl;
+        audio.controls = true;
+        audio.className = 'audio-preview';
+        content.appendChild(audio);
+      }
     } else {
       const pre = document.createElement('pre');
       pre.innerHTML = linkify(clip.content);
