@@ -133,6 +133,21 @@ nav#tabs::-webkit-scrollbar {
   opacity: 0.8;
 }
 
+.tab-badge {
+  background: var(--primary);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.tab.active .tab-badge {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .tab.add-tab {
   color: var(--primary);
   font-weight: 500;

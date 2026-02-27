@@ -48,6 +48,7 @@ const i18n = {
     create: 'Utw\u00f3rz',
     cancel: 'Anuluj',
     expiresIn: 'Wygasa ',
+    notificationNewClip: 'Nowy wpis w %s',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -92,6 +93,7 @@ const i18n = {
     create: 'Create',
     cancel: 'Cancel',
     expiresIn: 'Expires ',
+    notificationNewClip: 'New clip in %s',
   }
 };
 
@@ -129,6 +131,7 @@ let boards = [];
 let currentBoardId = 'default';
 let clips = [];
 let ws;
+const unreadCounts = {};
 
 // --- API helpers ---
 
@@ -241,6 +244,28 @@ function connectWS() {
           clips.unshift(msg.clip);
           renderClips();
         }
+        if (msg.boardId !== currentBoardId) {
+          unreadCounts[msg.boardId] = (unreadCounts[msg.boardId] || 0) + 1;
+          renderTabs();
+          updateTitle();
+        }
+        if (document.hidden && Notification.permission === 'granted') {
+          const board = boards.find(b => b.id === msg.boardId);
+          const boardName = board ? (board.id === 'default' ? t('defaultBoard') : board.name) : '';
+          const body = t('notificationNewClip').replace('%s', boardName);
+          const n = new Notification('Wklejka', { body, tag: 'wklejka-' + msg.boardId });
+          n.onclick = () => {
+            window.focus();
+            if (currentBoardId !== msg.boardId) {
+              currentBoardId = msg.boardId;
+              unreadCounts[msg.boardId] = 0;
+              updateTitle();
+              renderTabs();
+              loadClips();
+            }
+            n.close();
+          };
+        }
         break;
       case 'clip-deleted':
         if (msg.boardId === currentBoardId) {
@@ -294,6 +319,13 @@ function renderTabs() {
     label.textContent = board.id === 'default' ? t('defaultBoard') : board.name;
     btn.appendChild(label);
 
+    if (unreadCounts[board.id] > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'tab-badge';
+      badge.textContent = unreadCounts[board.id];
+      btn.appendChild(badge);
+    }
+
     if (board.expiresAt) {
       const tip = boardTooltip(board);
       if (tip) btn.title = tip;
@@ -314,6 +346,8 @@ function renderTabs() {
     btn.addEventListener('click', () => {
       if (currentBoardId === board.id) return;
       currentBoardId = board.id;
+      unreadCounts[board.id] = 0;
+      updateTitle();
       renderTabs();
       loadClips();
     });
@@ -601,6 +635,11 @@ function timeAgo(ts) {
   return days + t('daysAgo');
 }
 
+function updateTitle() {
+  const total = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+  document.title = total > 0 ? `(${total}) Wklejka` : 'Wklejka';
+}
+
 function showToast(msg) {
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -653,6 +692,10 @@ $('#modal-name').addEventListener('keydown', (e) => {
 updateStaticTexts();
 connectWS();
 loadBoards().then(() => loadClips());
+
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 
 // Refresh time labels every 30s
 setInterval(() => {
