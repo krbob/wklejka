@@ -421,10 +421,12 @@ function renderClips() {
     const actions = document.createElement('div');
     actions.className = 'clip-actions';
 
-    const copyBtn = document.createElement('button');
-    copyBtn.textContent = t('copy');
-    copyBtn.addEventListener('click', () => copyClip(clip));
-    actions.appendChild(copyBtn);
+    if (clip.type !== 'file') {
+      const copyBtn = document.createElement('button');
+      copyBtn.textContent = t('copy');
+      copyBtn.addEventListener('click', () => copyClip(clip));
+      actions.appendChild(copyBtn);
+    }
 
     if (clip.type === 'image' || clip.type === 'file') {
       const dlBtn = document.createElement('button');
