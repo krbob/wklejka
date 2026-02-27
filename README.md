@@ -24,7 +24,7 @@ docker compose up -d
 
 - **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB. Inline preview for PDFs, videos, and audio.
 - **Real-time sync** – WebSocket instantly propagates changes to every open browser.
-- **Tabs** – separate virtual documents (e.g. "Work", "Home").
+- **Tabs** – separate virtual documents (e.g. "Work", "Home") with optional auto-expiry (1 h, 24 h, 7 d, 30 d).
 - **Copy / Download / Delete** – on every entry.
 - **Persistent storage** – data lives in the `data/` directory and survives container restarts.
 - **Multilingual** – UI automatically switches between Polish and English based on browser language.

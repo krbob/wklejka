@@ -84,6 +84,11 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"type":"file","content":"data:text/plain;base64,aGVsbG8=","originalName":"test.txt"}' | grep -q '"type":"file"'
 
+          # Board with expiration
+          curl -fsS -X POST "${base}/api/boards" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"temp","expiresIn":3600000}' | grep -q '"expiresAt"'
+
           echo "Smoke test passed"
 
       - name: Clean up
