@@ -23,7 +23,11 @@
       <textarea id="text-input" placeholder="Wpisz lub wklej tekst tutaj..." rows="3"></textarea>
       <div class="paste-actions">
         <span class="hint">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
-        <button id="send-btn" class="btn btn-primary">Wy&#347;lij</button>
+        <div class="paste-buttons">
+          <button id="file-btn" class="btn btn-secondary">Za&#322;&#261;cz plik</button>
+          <input id="file-input" type="file" multiple hidden>
+          <button id="send-btn" class="btn btn-primary">Wy&#347;lij</button>
+        </div>
       </div>
     </div>
 
