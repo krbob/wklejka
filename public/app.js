@@ -32,7 +32,10 @@ const i18n = {
     daysAgo: ' dn. temu',
     connected: 'Po\u0142\u0105czono',
     reconnecting: 'Roz\u0142\u0105czono \u2013 ponawiam...',
+    file: 'Plik',
+    attachFile: 'Za\u0142\u0105cz plik',
     pastedImage: 'Wklejony obrazek',
+    dropHereFiles: 'Upu\u015b\u0107 pliki tutaj',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -61,7 +64,10 @@ const i18n = {
     daysAgo: ' days ago',
     connected: 'Connected',
     reconnecting: 'Disconnected \u2013 reconnecting...',
+    file: 'File',
+    attachFile: 'Attach file',
     pastedImage: 'Pasted image',
+    dropHereFiles: 'Drop files here',
   }
 };
 
@@ -77,7 +83,8 @@ function updateStaticTexts() {
   $('#text-input').placeholder = t('placeholder');
   $('.hint').textContent = t('hint');
   $('#send-btn').textContent = t('send');
-  $('.drop-overlay-content p').textContent = t('dropHere');
+  $('.drop-overlay-content p').textContent = t('dropHereFiles');
+  $('#file-btn').textContent = t('attachFile');
 }
 
 // --- State ---
@@ -112,9 +119,11 @@ async function loadClips() {
   renderClips();
 }
 
-async function sendClip(type, content) {
+async function sendClip(type, content, originalName) {
   try {
-    const clip = await api('POST', '/boards/' + currentBoardId + '/clips', { type, content });
+    const body = { type, content };
+    if (originalName) body.originalName = originalName;
+    const clip = await api('POST', '/boards/' + currentBoardId + '/clips', body);
     if (!clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
       renderClips();
@@ -265,7 +274,8 @@ function renderClips() {
     const header = document.createElement('div');
     header.className = 'clip-header';
     const typeLabel = document.createElement('span');
-    typeLabel.textContent = clip.type === 'image' ? t('image') : t('text');
+    const typeLabels = { image: t('image'), file: t('file'), text: t('text') };
+    typeLabel.textContent = typeLabels[clip.type] || clip.type;
     const time = document.createElement('span');
     time.textContent = timeAgo(clip.createdAt);
     time.dataset.ts = clip.createdAt;
@@ -283,6 +293,18 @@ function renderClips() {
       img.loading = 'lazy';
       img.addEventListener('click', () => window.open(clip.imageUrl, '_blank'));
       content.appendChild(img);
+    } else if (clip.type === 'file') {
+      const fileInfo = document.createElement('div');
+      fileInfo.className = 'file-info';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'file-name';
+      nameSpan.textContent = clip.originalName || 'file';
+      const sizeSpan = document.createElement('span');
+      sizeSpan.className = 'file-size';
+      sizeSpan.textContent = formatSize(clip.size);
+      fileInfo.appendChild(nameSpan);
+      fileInfo.appendChild(sizeSpan);
+      content.appendChild(fileInfo);
     } else {
       const pre = document.createElement('pre');
       pre.textContent = clip.content;
@@ -299,7 +321,7 @@ function renderClips() {
     copyBtn.addEventListener('click', () => copyClip(clip));
     actions.appendChild(copyBtn);
 
-    if (clip.type === 'image') {
+    if (clip.type === 'image' || clip.type === 'file') {
       const dlBtn = document.createElement('button');
       dlBtn.textContent = t('download');
       dlBtn.addEventListener('click', () => downloadClip(clip));
@@ -341,8 +363,8 @@ async function copyClip(clip) {
 
 function downloadClip(clip) {
   const a = document.createElement('a');
-  a.href = clip.imageUrl;
-  a.download = clip.filename || 'image';
+  a.href = clip.fileUrl || clip.imageUrl;
+  a.download = clip.originalName || clip.filename || 'file';
   a.click();
 }
 
@@ -390,11 +412,13 @@ document.addEventListener('drop', (e) => {
 
   const files = Array.from(e.dataTransfer.files);
   files.forEach(file => {
+    const reader = new FileReader();
     if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
       reader.onload = () => sendClip('image', reader.result);
-      reader.readAsDataURL(file);
+    } else {
+      reader.onload = () => sendClip('file', reader.result, file.name);
     }
+    reader.readAsDataURL(file);
   });
 });
 
@@ -417,6 +441,22 @@ $('#text-input').addEventListener('keydown', (e) => {
 
 $('#send-btn').addEventListener('click', sendText);
 
+// File picker
+$('#file-btn').addEventListener('click', () => $('#file-input').click());
+$('#file-input').addEventListener('change', (e) => {
+  const files = Array.from(e.target.files);
+  files.forEach(file => {
+    const reader = new FileReader();
+    if (file.type.startsWith('image/')) {
+      reader.onload = () => sendClip('image', reader.result);
+    } else {
+      reader.onload = () => sendClip('file', reader.result, file.name);
+    }
+    reader.readAsDataURL(file);
+  });
+  e.target.value = '';
+});
+
 // Auto-resize textarea
 $('#text-input').addEventListener('input', function () {
   this.style.height = 'auto';
@@ -429,6 +469,13 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function timeAgo(ts) {

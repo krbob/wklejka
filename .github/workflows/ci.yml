@@ -79,6 +79,11 @@ jobs:
 
           curl -fsS "${base}/api/boards/default/clips" | grep -q '"ci test"'
 
+          # File upload
+          curl -fsS -X POST "${base}/api/boards/default/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"file","content":"data:text/plain;base64,aGVsbG8=","originalName":"test.txt"}' | grep -q '"type":"file"'
+
           echo "Smoke test passed"
 
       - name: Clean up

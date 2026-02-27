@@ -218,6 +218,22 @@ main {
   transform: scale(0.97);
 }
 
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.paste-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 /* --- Clips --- */
 
 .clip {
@@ -297,6 +313,26 @@ main {
 .clip-actions .btn-delete:hover {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+/* --- File info --- */
+
+.file-info {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.file-name {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.file-size {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 /* --- Empty state --- */

@@ -2,7 +2,7 @@
 
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/krbob/wklejka/ci.yml)
 
-Lightweight, browser-based shared clipboard. Paste text or an image on one computer and instantly pick it up on another. Real-time sync via WebSocket, no sign-up required.
+Lightweight, browser-based shared clipboard. Paste text, images or files on one computer and instantly pick them up on another. Real-time sync via WebSocket, no sign-up required.
 
 ![screenshot](screenshot.png)
 
@@ -22,11 +22,11 @@ docker compose up -d
 
 ## Features
 
-- **Text & images** – paste (Ctrl+V) or drag and drop.
+- **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB.
 - **Real-time sync** – WebSocket instantly propagates changes to every open browser.
 - **Tabs** – separate virtual documents (e.g. "Work", "Home").
 - **Copy / Download / Delete** – on every entry.
-- **Persistent storage** – data lives in the `data/` directory (JSON + image files) and survives container restarts.
+- **Persistent storage** – data lives in the `data/` directory and survives container restarts.
 - **Multilingual** – UI automatically switches between Polish and English based on browser language.
 
 ## UI language

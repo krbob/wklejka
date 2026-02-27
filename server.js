@@ -7,9 +7,11 @@ const fs = require('fs');
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
+const FILES_DIR = path.join(DATA_DIR, 'files');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
+fs.mkdirSync(FILES_DIR, { recursive: true });
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -86,10 +88,13 @@ app.delete('/api/boards/:id', (req, res) => {
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
   if (!store.boards.find(b => b.id === id)) return res.status(404).json({ error: 'Board not found' });
   store.boards = store.boards.filter(b => b.id !== id);
-  // Delete associated images
+  // Delete associated files
   (store.clips[id] || []).forEach(clip => {
     if (clip.type === 'image' && clip.filename) {
       try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
+    }
+    if (clip.type === 'file' && clip.filename) {
+      try { fs.unlinkSync(path.join(FILES_DIR, clip.filename)); } catch {}
     }
   });
   delete store.clips[id];
@@ -121,6 +126,18 @@ app.post('/api/boards/:id/clips', (req, res) => {
     fs.writeFileSync(path.join(IMAGES_DIR, filename), buffer);
     clip.filename = filename;
     clip.imageUrl = `/api/images/${filename}`;
+  } else if (type === 'file') {
+    const match = content.match(/^data:([^;]*);base64,(.+)$/);
+    if (!match) return res.status(400).json({ error: 'Invalid file data' });
+    const buffer = Buffer.from(match[2], 'base64');
+    const originalName = req.body.originalName || 'file';
+    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `${clip.id}_${safeName}`;
+    fs.writeFileSync(path.join(FILES_DIR, filename), buffer);
+    clip.filename = filename;
+    clip.originalName = originalName;
+    clip.size = buffer.length;
+    clip.fileUrl = `/api/files/${filename}`;
   } else {
     clip.content = content;
   }
@@ -139,6 +156,9 @@ app.delete('/api/boards/:boardId/clips/:clipId', (req, res) => {
   if (clip.type === 'image' && clip.filename) {
     try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
   }
+  if (clip.type === 'file' && clip.filename) {
+    try { fs.unlinkSync(path.join(FILES_DIR, clip.filename)); } catch {}
+  }
   store.clips[boardId] = store.clips[boardId].filter(c => c.id !== clipId);
   saveStore();
   broadcast({ type: 'clip-deleted', boardId, clipId });
@@ -151,6 +171,14 @@ app.get('/api/images/:filename', (req, res) => {
   const filepath = path.join(IMAGES_DIR, filename);
   if (!fs.existsSync(filepath)) return res.status(404).end();
   res.sendFile(filepath);
+});
+
+// Serve files
+app.get('/api/files/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename);
+  const filepath = path.join(FILES_DIR, filename);
+  if (!fs.existsSync(filepath)) return res.status(404).end();
+  res.download(filepath, filename.replace(/^[^_]*_/, ''));
 });
 
 // --- HTTP + WebSocket ---
