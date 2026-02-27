@@ -64,7 +64,10 @@ app.get('/api/boards', (_req, res) => {
 app.post('/api/boards', (req, res) => {
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Name required' });
-  const board = { id: generateId(), name, createdAt: Date.now() };
+  const board = { id: generateId(), name, createdAt: Date.now(), expiresAt: null };
+  if (req.body.expiresIn && Number(req.body.expiresIn) > 0) {
+    board.expiresAt = Date.now() + Number(req.body.expiresIn);
+  }
   store.boards.push(board);
   store.clips[board.id] = [];
   saveStore();
@@ -83,12 +86,8 @@ app.put('/api/boards/:id', (req, res) => {
   res.json(board);
 });
 
-app.delete('/api/boards/:id', (req, res) => {
-  const { id } = req.params;
-  if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
-  if (!store.boards.find(b => b.id === id)) return res.status(404).json({ error: 'Board not found' });
+function removeBoardData(id) {
   store.boards = store.boards.filter(b => b.id !== id);
-  // Delete associated files
   (store.clips[id] || []).forEach(clip => {
     if (clip.type === 'image' && clip.filename) {
       try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
@@ -98,6 +97,13 @@ app.delete('/api/boards/:id', (req, res) => {
     }
   });
   delete store.clips[id];
+}
+
+app.delete('/api/boards/:id', (req, res) => {
+  const { id } = req.params;
+  if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
+  if (!store.boards.find(b => b.id === id)) return res.status(404).json({ error: 'Board not found' });
+  removeBoardData(id);
   saveStore();
   broadcast({ type: 'board-deleted', boardId: id });
   res.json({ ok: true });
@@ -199,6 +205,20 @@ function broadcast(data) {
     if (ws.readyState === 1) ws.send(msg);
   }
 }
+
+// --- Expiry cleanup (every 60s) ---
+
+setInterval(() => {
+  const now = Date.now();
+  const expired = store.boards.filter(b => b.expiresAt && now > b.expiresAt);
+  if (!expired.length) return;
+  expired.forEach(b => {
+    console.log(`Board expired: ${b.name} (${b.id})`);
+    removeBoardData(b.id);
+    broadcast({ type: 'board-deleted', boardId: b.id });
+  });
+  saveStore();
+}, 60000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wklejka running at http://0.0.0.0:${PORT}`);

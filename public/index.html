@@ -42,6 +42,30 @@
     </div>
   </div>
 
+  <div id="new-board-modal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="modal-title">Nowa karta</h2>
+      <label class="modal-label">
+        <span id="modal-name-label">Nazwa</span>
+        <input id="modal-name" type="text" autocomplete="off">
+      </label>
+      <label class="modal-label">
+        <span id="modal-expires-label">Wygasa po</span>
+        <select id="modal-expires">
+          <option value="">Nigdy</option>
+          <option value="3600000">1h</option>
+          <option value="86400000">24h</option>
+          <option value="604800000">7d</option>
+          <option value="2592000000">30d</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn btn-secondary">Anuluj</button>
+        <button id="modal-create" class="btn btn-primary">Utw&oacute;rz</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

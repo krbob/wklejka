@@ -37,6 +37,17 @@ const i18n = {
     uploading: 'Przesy\u0142anie...',
     pastedImage: 'Wklejony obrazek',
     dropHereFiles: 'Upu\u015b\u0107 pliki tutaj',
+    newTabTitle: 'Nowa karta',
+    boardNameLabel: 'Nazwa',
+    expiresLabel: 'Wygasa po',
+    expiresNever: 'Nigdy',
+    expires1h: '1 godzinie',
+    expires24h: '24 godzinach',
+    expires7d: '7 dniach',
+    expires30d: '30 dniach',
+    create: 'Utw\u00f3rz',
+    cancel: 'Anuluj',
+    expiresIn: 'Wygasa ',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -70,6 +81,17 @@ const i18n = {
     uploading: 'Uploading...',
     pastedImage: 'Pasted image',
     dropHereFiles: 'Drop files here',
+    newTabTitle: 'New tab',
+    boardNameLabel: 'Name',
+    expiresLabel: 'Expires after',
+    expiresNever: 'Never',
+    expires1h: '1 hour',
+    expires24h: '24 hours',
+    expires7d: '7 days',
+    expires30d: '30 days',
+    create: 'Create',
+    cancel: 'Cancel',
+    expiresIn: 'Expires ',
   }
 };
 
@@ -87,6 +109,18 @@ function updateStaticTexts() {
   $('#send-btn').textContent = t('send');
   $('.drop-overlay-content p').textContent = t('dropHereFiles');
   $('#file-btn').textContent = t('attachFile');
+  // Modal texts
+  $('#modal-title').textContent = t('newTabTitle');
+  $('#modal-name-label').textContent = t('boardNameLabel');
+  $('#modal-expires-label').textContent = t('expiresLabel');
+  $('#modal-cancel').textContent = t('cancel');
+  $('#modal-create').textContent = t('create');
+  const sel = $('#modal-expires');
+  sel.options[0].textContent = t('expiresNever');
+  sel.options[1].textContent = t('expires1h');
+  sel.options[2].textContent = t('expires24h');
+  sel.options[3].textContent = t('expires7d');
+  sel.options[4].textContent = t('expires30d');
 }
 
 // --- State ---
@@ -177,8 +211,10 @@ async function deleteClip(clipId) {
   }
 }
 
-async function createBoard(name) {
-  await api('POST', '/boards', { name });
+async function createBoard(name, expiresIn) {
+  const body = { name };
+  if (expiresIn) body.expiresIn = Number(expiresIn);
+  await api('POST', '/boards', body);
 }
 
 async function deleteBoard(boardId) {
@@ -258,6 +294,11 @@ function renderTabs() {
     label.textContent = board.id === 'default' ? t('defaultBoard') : board.name;
     btn.appendChild(label);
 
+    if (board.expiresAt) {
+      const tip = boardTooltip(board);
+      if (tip) btn.title = tip;
+    }
+
     if (board.id !== 'default') {
       const del = document.createElement('span');
       del.className = 'delete-board';
@@ -283,11 +324,21 @@ function renderTabs() {
   const addBtn = document.createElement('button');
   addBtn.className = 'tab add-tab';
   addBtn.textContent = t('newTab');
-  addBtn.addEventListener('click', () => {
-    const name = prompt(t('tabNamePrompt'));
-    if (name && name.trim()) createBoard(name.trim());
-  });
+  addBtn.addEventListener('click', openNewBoardModal);
   nav.appendChild(addBtn);
+}
+
+function expiryLabel(ms) {
+  if (ms < 3600000) return Math.round(ms / 60000) + ' min';
+  if (ms < 86400000) return Math.round(ms / 3600000) + (lang === 'pl' ? ' godz.' : 'h');
+  return Math.round(ms / 86400000) + (lang === 'pl' ? ' dn.' : 'd');
+}
+
+function boardTooltip(board) {
+  if (!board.expiresAt) return '';
+  const remaining = board.expiresAt - Date.now();
+  if (remaining <= 0) return t('expiresIn') + t('justNow');
+  return t('expiresIn') + expiryLabel(remaining);
 }
 
 function renderClips() {
@@ -559,6 +610,41 @@ function showToast(msg) {
     setTimeout(() => toast.remove(), 300);
   }, 2000);
 }
+
+// --- New board modal ---
+
+function openNewBoardModal() {
+  $('#modal-name').value = '';
+  $('#modal-expires').value = '';
+  $('#new-board-modal').classList.add('visible');
+  setTimeout(() => $('#modal-name').focus(), 50);
+}
+
+function closeNewBoardModal() {
+  $('#new-board-modal').classList.remove('visible');
+}
+
+$('#modal-cancel').addEventListener('click', closeNewBoardModal);
+
+$('#new-board-modal').addEventListener('click', (e) => {
+  if (e.target === $('#new-board-modal')) closeNewBoardModal();
+});
+
+$('#modal-create').addEventListener('click', () => {
+  const name = $('#modal-name').value.trim();
+  if (!name) return;
+  const expiresIn = $('#modal-expires').value;
+  createBoard(name, expiresIn || null);
+  closeNewBoardModal();
+});
+
+$('#modal-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('#modal-create').click();
+  }
+  if (e.key === 'Escape') closeNewBoardModal();
+});
 
 // --- Init ---
 
