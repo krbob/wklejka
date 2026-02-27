@@ -349,6 +349,29 @@ main {
   to { transform: rotate(360deg); }
 }
 
+/* --- PDF preview --- */
+
+.pdf-preview {
+  width: 100%;
+  height: 500px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* --- Media preview --- */
+
+.media-preview {
+  width: 100%;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.audio-preview {
+  width: 100%;
+  margin-top: 8px;
+}
+
 /* --- File info --- */
 
 .file-info {

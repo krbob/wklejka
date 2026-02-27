@@ -178,7 +178,7 @@ app.get('/api/files/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   const filepath = path.join(FILES_DIR, filename);
   if (!fs.existsSync(filepath)) return res.status(404).end();
-  res.download(filepath, filename.replace(/^[^_]*_/, ''));
+  res.sendFile(filepath);
 });
 
 // --- HTTP + WebSocket ---
