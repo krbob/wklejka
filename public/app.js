@@ -34,6 +34,7 @@ const i18n = {
     reconnecting: 'Roz\u0142\u0105czono \u2013 ponawiam...',
     file: 'Plik',
     attachFile: 'Za\u0142\u0105cz plik',
+    uploading: 'Przesy\u0142anie...',
     pastedImage: 'Wklejony obrazek',
     dropHereFiles: 'Upu\u015b\u0107 pliki tutaj',
   },
@@ -66,6 +67,7 @@ const i18n = {
     reconnecting: 'Disconnected \u2013 reconnecting...',
     file: 'File',
     attachFile: 'Attach file',
+    uploading: 'Uploading...',
     pastedImage: 'Pasted image',
     dropHereFiles: 'Drop files here',
   }
@@ -120,17 +122,49 @@ async function loadClips() {
 }
 
 async function sendClip(type, content, originalName) {
+  const ghostId = 'ghost-' + Date.now() + Math.random().toString(36).substr(2, 5);
+  if (type !== 'text') {
+    showGhost(ghostId, originalName || (type === 'image' ? t('image') : t('file')));
+  }
   try {
     const body = { type, content };
     if (originalName) body.originalName = originalName;
     const clip = await api('POST', '/boards/' + currentBoardId + '/clips', body);
+    removeGhost(ghostId);
     if (!clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
       renderClips();
     }
   } catch (e) {
+    removeGhost(ghostId);
     showToast(t('sendError') + e.message);
   }
+}
+
+function showGhost(ghostId, label) {
+  const container = $('#uploading');
+  const el = document.createElement('div');
+  el.className = 'clip clip-uploading';
+  el.id = ghostId;
+  const header = document.createElement('div');
+  header.className = 'clip-header';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const spinner = document.createElement('span');
+  spinner.className = 'spinner';
+  header.appendChild(name);
+  header.appendChild(spinner);
+  el.appendChild(header);
+  const body = document.createElement('div');
+  body.className = 'clip-content uploading-label';
+  body.textContent = t('uploading');
+  el.appendChild(body);
+  container.appendChild(el);
+}
+
+function removeGhost(ghostId) {
+  const el = document.getElementById(ghostId);
+  if (el) el.remove();
 }
 
 async function deleteClip(clipId) {
