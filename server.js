@@ -187,6 +187,12 @@ app.get('/api/files/:filename', (req, res) => {
   res.sendFile(filepath);
 });
 
+// Error handler – silence expected client errors (aborted uploads, bad JSON, too large)
+app.use((err, _req, res, next) => {
+  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });
+  next(err);
+});
+
 // --- HTTP + WebSocket ---
 
 const server = http.createServer(app);
