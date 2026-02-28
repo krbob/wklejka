@@ -132,6 +132,7 @@ let currentBoardId = 'default';
 let clips = [];
 let ws;
 const unreadCounts = {};
+let hiddenClipCount = 0;
 
 // --- API helpers ---
 
@@ -247,8 +248,11 @@ function connectWS() {
         if (msg.boardId !== currentBoardId) {
           unreadCounts[msg.boardId] = (unreadCounts[msg.boardId] || 0) + 1;
           renderTabs();
-          updateTitle();
         }
+        if (document.hidden) {
+          hiddenClipCount++;
+        }
+        updateTitle();
         if (document.hidden && Notification.permission === 'granted') {
           const board = boards.find(b => b.id === msg.boardId);
           const boardName = board ? (board.id === 'default' ? t('defaultBoard') : board.name) : '';
@@ -636,7 +640,8 @@ function timeAgo(ts) {
 }
 
 function updateTitle() {
-  const total = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+  const boardUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
+  const total = Math.max(boardUnread, hiddenClipCount);
   document.title = total > 0 ? `(${total}) Wklejka` : 'Wklejka';
 }
 
@@ -696,6 +701,13 @@ loadBoards().then(() => loadClips());
 if ('Notification' in window && Notification.permission === 'default') {
   Notification.requestPermission();
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    hiddenClipCount = 0;
+    updateTitle();
+  }
+});
 
 // Refresh time labels every 30s
 setInterval(() => {
