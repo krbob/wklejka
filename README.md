@@ -9,15 +9,26 @@ Lightweight, browser-based shared clipboard. Paste text, images or files on one 
 ## Getting started
 
 1. Make sure Docker is installed.
-2. Run the container: `docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest`.
-3. Open `http://localhost:3000` in a browser (from another machine: `http://<IP>:3000`).
+2. Create a `docker-compose.yml` file:
 
-Alternatively with `docker compose`:
+```yaml
+services:
+  wklejka:
+    image: ghcr.io/krbob/wklejka:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+```
+
+3. Start the service: `docker compose up -d`.
+4. Open `http://localhost:3000` in a browser (from another machine: `http://<IP>:3000`).
+
+Alternatively, run the container directly:
 
 ```bash
-git clone https://github.com/krbob/wklejka.git
-cd wklejka
-docker compose up -d
+docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest
 ```
 
 ## Features
