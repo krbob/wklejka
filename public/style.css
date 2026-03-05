@@ -289,6 +289,23 @@ main {
   margin: 0;
 }
 
+.clip-content pre.collapsed {
+  max-height: 400px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+.clip-content .expand-btn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 0 0;
+  display: block;
+}
+
 .clip-content pre a {
   color: var(--primary);
   text-decoration: none;

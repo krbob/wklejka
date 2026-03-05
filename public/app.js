@@ -49,6 +49,8 @@ const i18n = {
     cancel: 'Anuluj',
     expiresIn: 'Wygasa ',
     notificationNewClip: 'Nowy wpis w %s',
+    showMore: 'Rozwiń',
+    showLess: 'Zwiń',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -94,6 +96,8 @@ const i18n = {
     cancel: 'Cancel',
     expiresIn: 'Expires ',
     notificationNewClip: 'New clip in %s',
+    showMore: 'Show more',
+    showLess: 'Show less',
   }
 };
 
@@ -452,6 +456,19 @@ function renderClips() {
       const pre = document.createElement('pre');
       pre.innerHTML = linkify(clip.content);
       content.appendChild(pre);
+      requestAnimationFrame(() => {
+        if (pre.scrollHeight > 400) {
+          pre.classList.add('collapsed');
+          const btn = document.createElement('button');
+          btn.className = 'expand-btn';
+          btn.textContent = t('showMore');
+          btn.addEventListener('click', () => {
+            const collapsed = pre.classList.toggle('collapsed');
+            btn.textContent = collapsed ? t('showMore') : t('showLess');
+          });
+          content.appendChild(btn);
+        }
+      });
     }
     el.appendChild(content);
 
