@@ -647,3 +647,13 @@ main {
 .theme-toggle:hover {
   background: var(--bg);
 }
+
+/* --- Tab drag & drop --- */
+
+.tab.tab-dragging {
+  opacity: 0.4;
+}
+
+.tab.tab-drag-over {
+  box-shadow: -2px 0 0 0 var(--primary);
+}

@@ -99,6 +99,19 @@ function removeBoardData(id) {
   delete store.clips[id];
 }
 
+app.put('/api/boards/reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  const reordered = ids.map(id => store.boards.find(b => b.id === id)).filter(Boolean);
+  store.boards.forEach(b => {
+    if (!reordered.find(r => r.id === b.id)) reordered.push(b);
+  });
+  store.boards = reordered;
+  saveStore();
+  broadcast({ type: 'boards-reordered', ids: store.boards.map(b => b.id) });
+  res.json({ ok: true });
+});
+
 app.delete('/api/boards/:id', (req, res) => {
   const { id } = req.params;
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });

@@ -158,6 +158,7 @@ let clips = [];
 let ws;
 const unreadCounts = {};
 let hiddenClipCount = 0;
+let isDraggingTab = false;
 
 // --- API helpers ---
 
@@ -251,6 +252,20 @@ async function deleteBoard(boardId) {
   await api('DELETE', '/boards/' + boardId);
 }
 
+async function reorderBoard(draggedId, targetId) {
+  const fromIdx = boards.findIndex(b => b.id === draggedId);
+  const toIdx = boards.findIndex(b => b.id === targetId);
+  if (fromIdx === -1 || toIdx === -1) return;
+  const [moved] = boards.splice(fromIdx, 1);
+  boards.splice(toIdx, 0, moved);
+  renderTabs();
+  try {
+    await api('PUT', '/boards/reorder', { ids: boards.map(b => b.id) });
+  } catch {
+    await loadBoards();
+  }
+}
+
 // --- WebSocket ---
 
 function connectWS() {
@@ -322,6 +337,10 @@ function connectWS() {
         }
         renderTabs();
         break;
+      case 'boards-reordered':
+        boards.sort((a, b) => msg.ids.indexOf(a.id) - msg.ids.indexOf(b.id));
+        renderTabs();
+        break;
     }
   };
 
@@ -343,6 +362,7 @@ function renderTabs() {
   boards.forEach(board => {
     const btn = document.createElement('button');
     btn.className = 'tab' + (board.id === currentBoardId ? ' active' : '');
+    btn.draggable = true;
 
     const label = document.createElement('span');
     label.textContent = board.id === 'default' ? t('defaultBoard') : board.name;
@@ -371,6 +391,40 @@ function renderTabs() {
       });
       btn.appendChild(del);
     }
+
+    // Tab drag & drop for reordering
+    btn.addEventListener('dragstart', (e) => {
+      isDraggingTab = true;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', board.id);
+      btn.classList.add('tab-dragging');
+    });
+
+    btn.addEventListener('dragend', () => {
+      isDraggingTab = false;
+      btn.classList.remove('tab-dragging');
+      nav.querySelectorAll('.tab-drag-over').forEach(t => t.classList.remove('tab-drag-over'));
+    });
+
+    btn.addEventListener('dragover', (e) => {
+      if (!isDraggingTab) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      btn.classList.add('tab-drag-over');
+    });
+
+    btn.addEventListener('dragleave', () => {
+      btn.classList.remove('tab-drag-over');
+    });
+
+    btn.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.remove('tab-drag-over');
+      const draggedId = e.dataTransfer.getData('text/plain');
+      if (!draggedId || draggedId === board.id) return;
+      reorderBoard(draggedId, board.id);
+    });
 
     btn.addEventListener('click', () => {
       if (currentBoardId === board.id) return;
@@ -572,12 +626,14 @@ document.addEventListener('paste', (e) => {
 let dragCounter = 0;
 
 document.addEventListener('dragenter', (e) => {
+  if (isDraggingTab) return;
   e.preventDefault();
   dragCounter++;
   $('#drop-overlay').classList.add('visible');
 });
 
 document.addEventListener('dragleave', (e) => {
+  if (isDraggingTab) return;
   e.preventDefault();
   dragCounter--;
   if (dragCounter <= 0) {
@@ -586,9 +642,13 @@ document.addEventListener('dragleave', (e) => {
   }
 });
 
-document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('dragover', (e) => {
+  if (isDraggingTab) return;
+  e.preventDefault();
+});
 
 document.addEventListener('drop', (e) => {
+  if (isDraggingTab) return;
   e.preventDefault();
   dragCounter = 0;
   $('#drop-overlay').classList.remove('visible');
