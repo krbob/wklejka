@@ -161,6 +161,7 @@ let ws;
 const unreadCounts = {};
 let hiddenClipCount = 0;
 let isDraggingTab = false;
+const linkPreviewCache = new Map();
 
 // --- API helpers ---
 
@@ -266,6 +267,63 @@ async function reorderBoard(draggedId, targetId) {
   } catch {
     await loadBoards();
   }
+}
+
+// --- Link preview ---
+
+async function fetchLinkPreview(url) {
+  if (linkPreviewCache.has(url)) return linkPreviewCache.get(url);
+  try {
+    const res = await fetch('/api/link-preview?url=' + encodeURIComponent(url));
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.title && !data.description) return null;
+    linkPreviewCache.set(url, data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function renderLinkPreviews(content, text) {
+  const urls = (text.match(/https?:\/\/[^\s]+/g) || []).slice(0, 3);
+  urls.forEach(url => {
+    fetchLinkPreview(url).then(preview => {
+      if (!preview || !preview.title) return;
+      if (content.querySelector(`.link-preview[href="${CSS.escape(url)}"]`)) return;
+      const card = document.createElement('a');
+      card.className = 'link-preview';
+      card.href = url;
+      card.target = '_blank';
+      card.rel = 'noopener';
+      if (preview.image) {
+        const img = document.createElement('img');
+        img.src = preview.image;
+        img.onerror = () => img.remove();
+        card.appendChild(img);
+      }
+      const info = document.createElement('div');
+      info.className = 'link-preview-info';
+      const title = document.createElement('div');
+      title.className = 'link-preview-title';
+      title.textContent = preview.title;
+      info.appendChild(title);
+      if (preview.description) {
+        const desc = document.createElement('div');
+        desc.className = 'link-preview-desc';
+        desc.textContent = preview.description;
+        info.appendChild(desc);
+      }
+      try {
+        const domain = document.createElement('div');
+        domain.className = 'link-preview-domain';
+        domain.textContent = new URL(url).hostname;
+        info.appendChild(domain);
+      } catch {}
+      card.appendChild(info);
+      content.appendChild(card);
+    });
+  });
 }
 
 // --- WebSocket ---
@@ -546,6 +604,8 @@ function renderClips() {
           content.appendChild(btn);
         }
       });
+      // Link previews
+      renderLinkPreviews(content, clip.content);
     }
     el.appendChild(content);
 

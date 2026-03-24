@@ -200,6 +200,61 @@ app.get('/api/files/:filename', (req, res) => {
   res.sendFile(filepath);
 });
 
+// Link preview
+app.get('/api/link-preview', async (req, res) => {
+  const url = req.query.url;
+  if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Wklejka/1.0 (link-preview)' },
+      redirect: 'follow',
+    });
+    clearTimeout(timeout);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) {
+      return res.json({ title: '', description: '', image: '' });
+    }
+    const text = await response.text();
+    const html = text.substring(0, 50000);
+
+    const getMeta = (property) => {
+      const r1 = new RegExp(`<meta[^>]*property=["']${property}["'][^>]*content=["']([^"']*)["']`, 'i');
+      const m1 = html.match(r1);
+      if (m1) return m1[1];
+      const r2 = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*property=["']${property}["']`, 'i');
+      return html.match(r2)?.[1] || '';
+    };
+    const getMetaName = (name) => {
+      const r1 = new RegExp(`<meta[^>]*name=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i');
+      const m1 = html.match(r1);
+      if (m1) return m1[1];
+      const r2 = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*name=["']${name}["']`, 'i');
+      return html.match(r2)?.[1] || '';
+    };
+    const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+
+    const title = decode(getMeta('og:title') || html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '');
+    const description = decode(getMeta('og:description') || getMetaName('description'));
+    let image = getMeta('og:image');
+    if (image && !image.startsWith('http')) {
+      try { image = new URL(image, url).href; } catch {}
+    }
+
+    res.json({
+      title: title.substring(0, 200),
+      description: description.substring(0, 500),
+      image: image || '',
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch' });
+  }
+});
+
 // Error handler – silence expected client errors (aborted uploads, bad JSON, too large)
 app.use((err, _req, res, next) => {
   if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });

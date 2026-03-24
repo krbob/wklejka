@@ -332,7 +332,7 @@ main {
   text-decoration: underline;
 }
 
-.clip-content img {
+.clip-content > img {
   max-width: 100%;
   max-height: 400px;
   object-fit: contain;
@@ -342,7 +342,7 @@ main {
   transition: opacity 0.15s;
 }
 
-.clip-content img:hover {
+.clip-content > img:hover {
   opacity: 0.9;
 }
 
@@ -623,6 +623,11 @@ main {
   .btn-primary {
     text-align: center;
   }
+
+  .link-preview img {
+    width: 80px;
+    height: 60px;
+  }
 }
 
 /* --- Theme toggle --- */
@@ -679,4 +684,63 @@ main {
   0% { transform: scale(1); }
   50% { transform: scale(1.08); }
   100% { transform: scale(1); }
+}
+
+/* --- Link preview --- */
+
+.link-preview {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.15s;
+}
+
+.link-preview:hover {
+  background: var(--bg);
+}
+
+.link-preview img {
+  width: 120px;
+  height: 80px;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+  border-radius: 0;
+  max-height: 80px;
+  cursor: default;
+}
+
+.link-preview-info {
+  padding: 8px 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.link-preview-title {
+  font-weight: 500;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-preview-desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-preview-domain {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
 }
