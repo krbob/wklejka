@@ -657,3 +657,11 @@ main {
 .tab.tab-drag-over {
   box-shadow: -2px 0 0 0 var(--primary);
 }
+
+/* --- Copy success animation --- */
+
+.clip-actions button.copy-success {
+  color: #22c55e;
+  border-color: #22c55e;
+  transition: all 0.2s;
+}

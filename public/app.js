@@ -554,7 +554,7 @@ function renderClips() {
     if (clip.type !== 'file') {
       const copyBtn = document.createElement('button');
       copyBtn.textContent = t('copy');
-      copyBtn.addEventListener('click', () => copyClip(clip));
+      copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
       actions.appendChild(copyBtn);
     }
 
@@ -578,7 +578,7 @@ function renderClips() {
 
 // --- Clip actions ---
 
-async function copyClip(clip) {
+async function copyClip(clip, btn) {
   try {
     if (clip.type === 'text') {
       await navigator.clipboard.writeText(clip.content);
@@ -588,6 +588,15 @@ async function copyClip(clip) {
       await navigator.clipboard.write([
         new ClipboardItem({ [blob.type]: blob })
       ]);
+    }
+    if (btn) {
+      const original = btn.textContent;
+      btn.textContent = '\u2713';
+      btn.classList.add('copy-success');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('copy-success');
+      }, 1500);
     }
     showToast(t('copied'));
   } catch {
