@@ -303,6 +303,35 @@ setInterval(() => {
   saveStore();
 }, 60000);
 
+// --- Orphan file cleanup (every 24h) ---
+
+function cleanOrphanFiles() {
+  const referencedFiles = new Set();
+  for (const clips of Object.values(store.clips)) {
+    for (const clip of clips) {
+      if (clip.filename) referencedFiles.add(clip.filename);
+    }
+  }
+
+  let removed = 0;
+  for (const [dir, label] of [[IMAGES_DIR, 'image'], [FILES_DIR, 'file']]) {
+    let files;
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!referencedFiles.has(f)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+          removed++;
+          console.log(`Orphan ${label} removed: ${f}`);
+        } catch {}
+      }
+    }
+  }
+  if (removed) console.log(`Orphan cleanup: removed ${removed} file(s)`);
+}
+
+cleanOrphanFiles();
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wklejka running at http://0.0.0.0:${PORT}`);
 });
