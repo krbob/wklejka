@@ -129,6 +129,27 @@ function updateStaticTexts() {
   sel.options[4].textContent = t('expires30d');
 }
 
+// --- Dark mode ---
+
+function initTheme() {
+  const saved = localStorage.getItem('wklejka-theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.theme = saved || (prefersDark ? 'dark' : 'light');
+  updateThemeToggle();
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('wklejka-theme', next);
+  updateThemeToggle();
+}
+
+function updateThemeToggle() {
+  const btn = $('#theme-toggle');
+  if (btn) btn.textContent = document.documentElement.dataset.theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+}
+
 // --- State ---
 
 let boards = [];
@@ -711,6 +732,8 @@ $('#modal-name').addEventListener('keydown', (e) => {
 
 // --- Init ---
 
+initTheme();
+$('#theme-toggle').addEventListener('click', toggleTheme);
 updateStaticTexts();
 connectWS();
 loadBoards().then(() => loadClips());
@@ -732,3 +755,11 @@ setInterval(() => {
     el.textContent = timeAgo(Number(el.dataset.ts));
   });
 }, 30000);
+
+// Listen for OS theme changes
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+  if (!localStorage.getItem('wklejka-theme')) {
+    document.documentElement.dataset.theme = e.matches ? 'dark' : 'light';
+    updateThemeToggle();
+  }
+});

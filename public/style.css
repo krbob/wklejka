@@ -22,6 +22,23 @@
   --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* --- Dark theme --- */
+
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --primary: #818cf8;
+  --primary-hover: #6366f1;
+  --primary-light: #1e1b4b;
+  --text: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --border: #334155;
+  --danger: #f87171;
+  --danger-hover: #ef4444;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: var(--bg);
@@ -457,7 +474,7 @@ main {
 }
 
 .drop-overlay-content {
-  background: white;
+  background: var(--surface);
   border: 3px dashed var(--primary);
   border-radius: 24px;
   padding: 48px 64px;
@@ -606,4 +623,27 @@ main {
   .btn-primary {
     text-align: center;
   }
+}
+
+/* --- Theme toggle --- */
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 4px 8px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--bg);
 }
