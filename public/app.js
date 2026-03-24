@@ -143,23 +143,38 @@ function updateStaticTexts() {
 
 // --- Dark mode ---
 
-function initTheme() {
-  const saved = localStorage.getItem('wklejka-theme');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.dataset.theme = saved || (prefersDark ? 'dark' : 'light');
+let themeMode = localStorage.getItem('wklejka-theme') || 'auto';
+
+function applyTheme() {
+  if (themeMode === 'auto') {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.dataset.theme = prefersDark ? 'dark' : 'light';
+  } else {
+    document.documentElement.dataset.theme = themeMode;
+  }
   updateThemeToggle();
 }
 
+function initTheme() {
+  applyTheme();
+}
+
 function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('wklejka-theme', next);
-  updateThemeToggle();
+  const order = ['auto', 'dark', 'light'];
+  themeMode = order[(order.indexOf(themeMode) + 1) % 3];
+  if (themeMode === 'auto') {
+    localStorage.removeItem('wklejka-theme');
+  } else {
+    localStorage.setItem('wklejka-theme', themeMode);
+  }
+  applyTheme();
 }
 
 function updateThemeToggle() {
   const btn = $('#theme-toggle');
-  if (btn) btn.textContent = document.documentElement.dataset.theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+  if (!btn) return;
+  const labels = { auto: 'Auto', dark: lang === 'pl' ? 'Ciemny' : 'Dark', light: lang === 'pl' ? 'Jasny' : 'Light' };
+  btn.textContent = labels[themeMode];
 }
 
 // --- State ---
@@ -1022,9 +1037,6 @@ setInterval(() => {
 }, 30000);
 
 // Listen for OS theme changes
-window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-  if (!localStorage.getItem('wklejka-theme')) {
-    document.documentElement.dataset.theme = e.matches ? 'dark' : 'light';
-    updateThemeToggle();
-  }
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (themeMode === 'auto') applyTheme();
 });
