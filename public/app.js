@@ -397,6 +397,7 @@ function connectWS() {
         const idx = boards.findIndex(b => b.id === msg.board.id);
         if (idx !== -1) boards[idx] = msg.board;
         renderTabs();
+        if (msg.board.id === currentBoardId) renderClips();
         break;
       }
       case 'board-deleted':
