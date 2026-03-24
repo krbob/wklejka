@@ -665,3 +665,18 @@ main {
   border-color: #22c55e;
   transition: all 0.2s;
 }
+
+/* --- Delete confirmation --- */
+
+.clip-actions .btn-confirm-active {
+  color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  font-weight: 600;
+  animation: pulse-danger 0.3s ease;
+}
+
+@keyframes pulse-danger {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}

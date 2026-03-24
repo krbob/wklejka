@@ -51,6 +51,7 @@ const i18n = {
     notificationNewClip: 'Nowy wpis w %s',
     showMore: 'Rozwiń',
     showLess: 'Zwiń',
+    sure: 'Na pewno?',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -98,6 +99,7 @@ const i18n = {
     notificationNewClip: 'New clip in %s',
     showMore: 'Show more',
     showLess: 'Show less',
+    sure: 'Sure?',
   }
 };
 
@@ -568,7 +570,22 @@ function renderClips() {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-delete';
     delBtn.textContent = t('delete');
-    delBtn.addEventListener('click', () => deleteClip(clip.id));
+    let deleteConfirmTimeout;
+    delBtn.addEventListener('click', () => {
+      if (delBtn.dataset.confirm) {
+        clearTimeout(deleteConfirmTimeout);
+        deleteClip(clip.id);
+        return;
+      }
+      delBtn.dataset.confirm = '1';
+      delBtn.textContent = t('sure');
+      delBtn.classList.add('btn-confirm-active');
+      deleteConfirmTimeout = setTimeout(() => {
+        delete delBtn.dataset.confirm;
+        delBtn.textContent = t('delete');
+        delBtn.classList.remove('btn-confirm-active');
+      }, 3000);
+    });
     actions.appendChild(delBtn);
 
     el.appendChild(actions);
