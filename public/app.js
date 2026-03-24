@@ -52,6 +52,11 @@ const i18n = {
     showMore: 'Rozwiń',
     showLess: 'Zwiń',
     sure: 'Na pewno?',
+    lock: 'Zablokuj',
+    unlock: 'Odblokuj',
+    unlockTitle: 'Odblokuj kart\u0119',
+    unlockPrompt: 'Wpisz "%s" aby odblokowa\u0107:',
+    boardLocked: 'Karta jest zablokowana',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -100,6 +105,11 @@ const i18n = {
     showMore: 'Show more',
     showLess: 'Show less',
     sure: 'Sure?',
+    lock: 'Lock',
+    unlock: 'Unlock',
+    unlockTitle: 'Unlock tab',
+    unlockPrompt: 'Type "%s" to unlock:',
+    boardLocked: 'Board is locked',
   }
 };
 
@@ -425,8 +435,39 @@ function renderTabs() {
     btn.draggable = true;
 
     const label = document.createElement('span');
+    label.className = 'tab-label';
     label.textContent = board.id === 'default' ? t('defaultBoard') : board.name;
     btn.appendChild(label);
+
+    // Double-click to rename (non-default, non-locked)
+    if (board.id !== 'default') {
+      label.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        if (board.locked) return;
+        const input = document.createElement('input');
+        input.className = 'tab-rename-input';
+        input.value = board.name;
+        input.size = Math.max(board.name.length, 5);
+        btn.replaceChild(input, label);
+        input.focus();
+        input.select();
+        const commit = () => {
+          const newName = input.value.trim();
+          if (newName && newName !== board.name) {
+            api('PUT', '/boards/' + board.id, { name: newName });
+          }
+          label.textContent = newName || board.name;
+          if (input.parentNode === btn) btn.replaceChild(label, input);
+        };
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+          if (ev.key === 'Escape') { if (input.parentNode === btn) btn.replaceChild(label, input); }
+          ev.stopPropagation();
+        });
+        input.addEventListener('blur', commit);
+        input.addEventListener('click', (ev) => ev.stopPropagation());
+      });
+    }
 
     if (unreadCounts[board.id] > 0) {
       const badge = document.createElement('span');
@@ -440,7 +481,25 @@ function renderTabs() {
       if (tip) btn.title = tip;
     }
 
+    // Lock icon (non-default only)
     if (board.id !== 'default') {
+      const lock = document.createElement('span');
+      lock.className = 'lock-board' + (board.locked ? ' locked' : '');
+      lock.textContent = board.locked ? '\uD83D\uDD12' : '\uD83D\uDD13';
+      lock.title = board.locked ? t('unlock') : t('lock');
+      lock.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (board.locked) {
+          openUnlockModal(board);
+        } else {
+          api('PUT', '/boards/' + board.id, { locked: true });
+        }
+      });
+      btn.appendChild(lock);
+    }
+
+    // Delete button (non-default, non-locked)
+    if (board.id !== 'default' && !board.locked) {
       const del = document.createElement('span');
       del.className = 'delete-board';
       del.textContent = '\u00d7';
@@ -627,26 +686,29 @@ function renderClips() {
       actions.appendChild(dlBtn);
     }
 
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn-delete';
-    delBtn.textContent = t('delete');
-    let deleteConfirmTimeout;
-    delBtn.addEventListener('click', () => {
-      if (delBtn.dataset.confirm) {
-        clearTimeout(deleteConfirmTimeout);
-        deleteClip(clip.id);
-        return;
-      }
-      delBtn.dataset.confirm = '1';
-      delBtn.textContent = t('sure');
-      delBtn.classList.add('btn-confirm-active');
-      deleteConfirmTimeout = setTimeout(() => {
-        delete delBtn.dataset.confirm;
-        delBtn.textContent = t('delete');
-        delBtn.classList.remove('btn-confirm-active');
-      }, 3000);
-    });
-    actions.appendChild(delBtn);
+    const currentBoard = boards.find(b => b.id === currentBoardId);
+    if (!currentBoard || !currentBoard.locked) {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-delete';
+      delBtn.textContent = t('delete');
+      let deleteConfirmTimeout;
+      delBtn.addEventListener('click', () => {
+        if (delBtn.dataset.confirm) {
+          clearTimeout(deleteConfirmTimeout);
+          deleteClip(clip.id);
+          return;
+        }
+        delBtn.dataset.confirm = '1';
+        delBtn.textContent = t('sure');
+        delBtn.classList.add('btn-confirm-active');
+        deleteConfirmTimeout = setTimeout(() => {
+          delete delBtn.dataset.confirm;
+          delBtn.textContent = t('delete');
+          delBtn.classList.remove('btn-confirm-active');
+        }, 3000);
+      });
+      actions.appendChild(delBtn);
+    }
 
     el.appendChild(actions);
     container.appendChild(el);
@@ -884,6 +946,52 @@ $('#modal-name').addEventListener('keydown', (e) => {
     $('#modal-create').click();
   }
   if (e.key === 'Escape') closeNewBoardModal();
+});
+
+// --- Unlock modal ---
+
+let unlockBoardId = null;
+
+function openUnlockModal(board) {
+  unlockBoardId = board.id;
+  $('#unlock-title').textContent = t('unlockTitle');
+  $('#unlock-prompt').textContent = t('unlockPrompt').replace('%s', board.name);
+  $('#unlock-input').value = '';
+  $('#unlock-input').dataset.expected = board.name;
+  $('#unlock-confirm').disabled = true;
+  $('#unlock-confirm').textContent = t('unlock');
+  $('#unlock-cancel').textContent = t('cancel');
+  $('#unlock-modal').classList.add('visible');
+  setTimeout(() => $('#unlock-input').focus(), 50);
+}
+
+function closeUnlockModal() {
+  $('#unlock-modal').classList.remove('visible');
+  unlockBoardId = null;
+}
+
+$('#unlock-cancel').addEventListener('click', closeUnlockModal);
+
+$('#unlock-modal').addEventListener('click', (e) => {
+  if (e.target === $('#unlock-modal')) closeUnlockModal();
+});
+
+$('#unlock-input').addEventListener('input', () => {
+  $('#unlock-confirm').disabled = $('#unlock-input').value !== $('#unlock-input').dataset.expected;
+});
+
+$('#unlock-confirm').addEventListener('click', () => {
+  if (!unlockBoardId || $('#unlock-confirm').disabled) return;
+  api('PUT', '/boards/' + unlockBoardId, { locked: false });
+  closeUnlockModal();
+});
+
+$('#unlock-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !$('#unlock-confirm').disabled) {
+    e.preventDefault();
+    $('#unlock-confirm').click();
+  }
+  if (e.key === 'Escape') closeUnlockModal();
 });
 
 // --- Init ---

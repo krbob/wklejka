@@ -91,9 +91,14 @@ app.put('/api/boards/reorder', (req, res) => {
 app.put('/api/boards/:id', (req, res) => {
   const board = store.boards.find(b => b.id === req.params.id);
   if (!board) return res.status(404).json({ error: 'Board not found' });
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'Name required' });
-  board.name = name;
+  if (req.body.name !== undefined) {
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name required' });
+    board.name = name;
+  }
+  if (req.body.locked !== undefined) {
+    board.locked = !!req.body.locked;
+  }
   saveStore();
   broadcast({ type: 'board-updated', board });
   res.json(board);
@@ -115,6 +120,8 @@ function removeBoardData(id) {
 app.delete('/api/boards/:id', (req, res) => {
   const { id } = req.params;
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
+  const board = store.boards.find(b => b.id === id);
+  if (board && board.locked) return res.status(403).json({ error: 'Board is locked' });
   if (!store.boards.find(b => b.id === id)) return res.status(404).json({ error: 'Board not found' });
   removeBoardData(id);
   saveStore();
@@ -170,6 +177,8 @@ app.post('/api/boards/:id/clips', (req, res) => {
 app.delete('/api/boards/:boardId/clips/:clipId', (req, res) => {
   const { boardId, clipId } = req.params;
   if (!store.clips[boardId]) return res.status(404).json({ error: 'Board not found' });
+  const lockedBoard = store.boards.find(b => b.id === boardId);
+  if (lockedBoard && lockedBoard.locked) return res.status(403).json({ error: 'Board is locked' });
   const clip = store.clips[boardId].find(c => c.id === clipId);
   if (!clip) return res.status(404).json({ error: 'Clip not found' });
   if (clip.type === 'image' && clip.filename) {

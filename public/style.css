@@ -663,6 +663,47 @@ main {
   box-shadow: -2px 0 0 0 var(--primary);
 }
 
+/* --- Tab rename --- */
+
+.tab-rename-input {
+  background: var(--surface);
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-family: inherit;
+  padding: 2px 6px;
+  outline: none;
+  width: auto;
+}
+
+/* --- Lock icon --- */
+
+.lock-board {
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0 2px;
+}
+
+.tab:hover .lock-board,
+.lock-board.locked {
+  opacity: 0.7;
+}
+
+.lock-board:hover {
+  opacity: 1 !important;
+}
+
+/* --- Unlock modal --- */
+
+.unlock-prompt {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
 /* --- Copy success animation --- */
 
 .clip-actions button.copy-success {
