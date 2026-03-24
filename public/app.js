@@ -660,10 +660,20 @@ async function copyClip(clip, btn) {
     if (clip.type === 'text') {
       await navigator.clipboard.writeText(clip.content);
     } else {
-      const res = await fetch(clip.imageUrl);
-      const blob = await res.blob();
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = clip.imageUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       await navigator.clipboard.write([
-        new ClipboardItem({ [blob.type]: blob })
+        new ClipboardItem({ 'image/png': blob })
       ]);
     }
     if (btn) {
@@ -675,7 +685,6 @@ async function copyClip(clip, btn) {
         btn.classList.remove('copy-success');
       }, 1500);
     }
-    showToast(t('copied'));
   } catch {
     if (clip.type === 'image') {
       window.open(clip.imageUrl, '_blank');
