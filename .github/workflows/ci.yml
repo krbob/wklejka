@@ -146,8 +146,8 @@ jobs:
           set -euo pipefail
           base="http://localhost:${{ env.APP_PORT }}"
 
-          # Should return JSON (even if title is empty for non-HTML)
-          curl -fsS "${base}/api/link-preview?url=https://example.com" | grep -q '"title"'
+          # Fetch preview of own page (always reachable in CI)
+          curl -fsS "${base}/api/link-preview?url=${base}" | grep -q '"title"'
 
           # Invalid URL should return 400
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/link-preview?url=notaurl")
