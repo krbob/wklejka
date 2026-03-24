@@ -91,6 +91,70 @@ jobs:
 
           echo "Smoke test passed"
 
+      - name: Smoke test board rename, reorder, and lock
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+
+          # Create two boards
+          BOARD_A=$(curl -fsS -X POST "${base}/api/boards" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Board A"}')
+          BOARD_B=$(curl -fsS -X POST "${base}/api/boards" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Board B"}')
+          ID_A=$(echo "$BOARD_A" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          ID_B=$(echo "$BOARD_B" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+          # Rename board
+          curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Renamed A"}' | grep -q '"Renamed A"'
+
+          # Reorder boards
+          curl -fsS -X PUT "${base}/api/boards/reorder" \
+            -H 'Content-Type: application/json' \
+            -d "{\"ids\":[\"default\",\"${ID_B}\",\"${ID_A}\"]}" | grep -q '"ok"'
+
+          # Lock board
+          curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
+            -H 'Content-Type: application/json' \
+            -d '{"locked":true}' | grep -q '"locked":true'
+
+          # Delete locked board should fail (403)
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}")
+          [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
+
+          # Add clip to locked board, then try to delete it (403)
+          CLIP=$(curl -fsS -X POST "${base}/api/boards/${ID_A}/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"text","content":"locked clip"}')
+          CLIP_ID=$(echo "$CLIP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}/clips/${CLIP_ID}")
+          [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
+
+          # Unlock and delete should work
+          curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
+            -H 'Content-Type: application/json' \
+            -d '{"locked":false}' | grep -q '"locked":false'
+          curl -fsS -X DELETE "${base}/api/boards/${ID_A}" | grep -q '"ok"'
+
+          echo "Board rename, reorder, and lock tests passed"
+
+      - name: Smoke test link preview
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+
+          # Should return JSON (even if title is empty for non-HTML)
+          curl -fsS "${base}/api/link-preview?url=https://example.com" | grep -q '"title"'
+
+          # Invalid URL should return 400
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/link-preview?url=notaurl")
+          [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
+
+          echo "Link preview tests passed"
+
       - name: Clean up
         if: always()
         run: docker rm -f app || true

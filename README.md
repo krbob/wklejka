@@ -35,8 +35,11 @@ docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest
 
 - **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB. Inline preview for PDFs, videos, and audio.
 - **Real-time sync** – WebSocket instantly propagates changes to every open browser.
-- **Tabs** – separate virtual documents (e.g. "Work", "Home") with optional auto-expiry (1 h, 24 h, 7 d, 30 d).
-- **Copy / Download / Delete** – on every entry.
+- **Tabs** – separate virtual documents (e.g. "Work", "Home") with optional auto-expiry (1 h, 24 h, 7 d, 30 d). Drag to reorder, double-click to rename.
+- **Tab locking** – lock a tab to prevent accidental deletion of the tab or its clips. Unlocking requires typing the tab name (like deleting a GitHub repo).
+- **Copy / Download / Delete** – on every entry. Delete requires inline confirmation.
+- **Link previews** – URLs in text clips automatically show a preview card with title, description, and image.
+- **Dark mode** – auto-detects system preference, manual toggle in header. Persisted across sessions.
 - **Persistent storage** – data lives in the `data/` directory and survives container restarts.
 - **Multilingual** – UI automatically switches between Polish and English based on browser language.
 
