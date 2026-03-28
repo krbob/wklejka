@@ -187,6 +187,7 @@ const unreadCounts = {};
 let hiddenClipCount = 0;
 let isDraggingTab = false;
 let renderedClipIds = new Set();
+let renderedBoardIds = new Set();
 const linkPreviewCache = new Map();
 
 // --- API helpers ---
@@ -206,6 +207,7 @@ async function api(method, path, body) {
 
 async function loadBoards() {
   boards = await api('GET', '/boards');
+  renderedBoardIds = new Set(boards.map(b => b.id));
   renderTabs();
 }
 
@@ -302,6 +304,25 @@ async function createBoard(name, expiresIn) {
   const body = { name };
   if (expiresIn) body.expiresIn = Number(expiresIn);
   await api('POST', '/boards', body);
+}
+
+function animateTabOut(boardId, callback) {
+  const tab = document.querySelector(`.tab[data-board-id="${boardId}"]`);
+  if (tab) {
+    tab.style.maxWidth = tab.offsetWidth + 'px';
+    tab.classList.add('tab-animating');
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        tab.style.maxWidth = '0px';
+        tab.style.paddingLeft = '0px';
+        tab.style.paddingRight = '0px';
+        tab.style.opacity = '0';
+        tab.addEventListener('transitionend', callback, { once: true });
+      });
+    });
+  } else {
+    callback();
+  }
 }
 
 async function deleteBoard(boardId) {
@@ -454,12 +475,14 @@ function connectWS() {
         break;
       }
       case 'board-deleted':
-        boards = boards.filter(b => b.id !== msg.boardId);
-        if (currentBoardId === msg.boardId) {
-          currentBoardId = 'default';
-          loadClips();
-        }
-        renderTabs();
+        animateTabOut(msg.boardId, () => {
+          boards = boards.filter(b => b.id !== msg.boardId);
+          if (currentBoardId === msg.boardId) {
+            currentBoardId = 'default';
+            loadClips();
+          }
+          renderTabs();
+        });
         break;
       case 'boards-reordered':
         boards.sort((a, b) => msg.ids.indexOf(a.id) - msg.ids.indexOf(b.id));
@@ -486,6 +509,7 @@ function renderTabs() {
   boards.forEach(board => {
     const btn = document.createElement('button');
     btn.className = 'tab' + (board.id === currentBoardId ? ' active' : '');
+    btn.dataset.boardId = board.id;
     btn.draggable = true;
 
     const label = document.createElement('span');
@@ -616,6 +640,41 @@ function renderTabs() {
   addBtn.textContent = t('newTab');
   addBtn.addEventListener('click', openNewBoardModal);
   nav.appendChild(addBtn);
+
+  // Animate newly added tabs
+  const newBoardIds = new Set(boards.map(b => b.id));
+  boards.forEach(board => {
+    if (!renderedBoardIds.has(board.id)) {
+      const tab = nav.querySelector(`.tab[data-board-id="${board.id}"]`);
+      if (tab) {
+        const fullWidth = tab.offsetWidth;
+        // Collapse instantly (no transition)
+        tab.style.transition = 'none';
+        tab.style.overflow = 'hidden';
+        tab.style.maxWidth = '0px';
+        tab.style.paddingLeft = '0px';
+        tab.style.paddingRight = '0px';
+        tab.style.opacity = '0';
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // Now animate open
+            tab.classList.add('tab-animating');
+            tab.style.transition = '';
+            tab.style.maxWidth = fullWidth + 'px';
+            tab.style.paddingLeft = '';
+            tab.style.paddingRight = '';
+            tab.style.opacity = '1';
+            tab.addEventListener('transitionend', () => {
+              tab.classList.remove('tab-animating');
+              tab.style.maxWidth = '';
+              tab.style.overflow = '';
+            }, { once: true });
+          });
+        });
+      }
+    }
+  });
+  renderedBoardIds = newBoardIds;
 }
 
 function expiryLabel(ms) {

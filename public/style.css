@@ -165,6 +165,11 @@ nav#tabs::-webkit-scrollbar {
   background: rgba(255, 255, 255, 0.3);
 }
 
+.tab.tab-animating {
+  overflow: hidden;
+  transition: max-width 0.3s ease, opacity 0.3s ease, padding-left 0.3s ease, padding-right 0.3s ease;
+}
+
 .tab.add-tab {
   color: var(--primary);
   font-weight: 500;
@@ -446,7 +451,7 @@ main {
 /* --- File info --- */
 
 .file-info {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   gap: 10px;
   padding: 10px 14px;
