@@ -198,8 +198,9 @@ main {
   border: 2px dashed var(--border);
   border-radius: 8px;
   padding: 12px;
-  font-family: inherit;
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 0.95rem;
+  tab-size: 2;
   resize: vertical;
   outline: none;
   transition: border-color 0.2s;
@@ -274,10 +275,19 @@ main {
   padding: 16px;
   box-shadow: var(--shadow);
   margin-bottom: 12px;
-  animation: slideIn 0.25s ease;
 }
 
-@keyframes slideIn {
+.clip.clip-animating {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease, transform 0.3s ease,
+              padding-top 0.3s ease, padding-bottom 0.3s ease, margin-bottom 0.3s ease;
+}
+
+.clip.clip-fade-enter {
+  animation: clipFadeIn 0.3s ease both;
+}
+
+@keyframes clipFadeIn {
   from {
     opacity: 0;
     transform: translateY(-8px);
@@ -300,17 +310,27 @@ main {
 .clip-content pre {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.55;
-  font-family: inherit;
-  font-size: 0.95rem;
+  line-height: 1.5;
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
   margin: 0;
+  tab-size: 2;
+}
+
+.clip-content pre.collapsible {
+  transition: max-height 0.35s ease;
+  overflow: hidden;
 }
 
 .clip-content pre.collapsed {
   max-height: 400px;
-  overflow: hidden;
   -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
   mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+.clip-content pre.expanded {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .clip-content .expand-btn {
@@ -450,6 +470,12 @@ main {
   padding: 48px 24px;
   color: var(--text-secondary);
   font-size: 1rem;
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* --- Drop overlay --- */
@@ -711,7 +737,6 @@ main {
 .clip-actions button.copy-success {
   color: #22c55e;
   border-color: #22c55e;
-  transition: all 0.2s;
 }
 
 /* --- Delete confirmation --- */
@@ -720,14 +745,15 @@ main {
   color: var(--danger) !important;
   border-color: var(--danger) !important;
   font-weight: 600;
-  animation: pulse-danger 0.3s ease;
+  animation: pulse-danger 0.35s ease;
 }
 
 @keyframes pulse-danger {
   0% { transform: scale(1); }
-  50% { transform: scale(1.08); }
+  40% { transform: scale(1.1); }
   100% { transform: scale(1); }
 }
+
 
 /* --- Link preview --- */
 

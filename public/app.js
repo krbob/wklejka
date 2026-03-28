@@ -186,6 +186,7 @@ let ws;
 const unreadCounts = {};
 let hiddenClipCount = 0;
 let isDraggingTab = false;
+let renderedClipIds = new Set();
 const linkPreviewCache = new Map();
 
 // --- API helpers ---
@@ -210,6 +211,7 @@ async function loadBoards() {
 
 async function loadClips() {
   clips = await api('GET', '/boards/' + currentBoardId + '/clips');
+  renderedClipIds.clear();
   renderClips();
 }
 
@@ -225,7 +227,7 @@ async function sendClip(type, content, originalName) {
     removeGhost(ghostId);
     if (!clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
-      renderClips();
+      insertClipAnimated(clip);
     }
   } catch (e) {
     removeGhost(ghostId);
@@ -259,11 +261,38 @@ function removeGhost(ghostId) {
   if (el) el.remove();
 }
 
+function animateClipOut(el, callback) {
+  const height = el.offsetHeight;
+  el.classList.add('clip-animating');
+  el.style.maxHeight = height + 'px';
+  el.style.overflow = 'hidden';
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'scale(0.97)';
+      el.style.maxHeight = '0px';
+      el.style.paddingTop = '0px';
+      el.style.paddingBottom = '0px';
+      el.style.marginBottom = '0px';
+      el.addEventListener('transitionend', callback, { once: true });
+    });
+  });
+}
+
 async function deleteClip(clipId) {
   try {
     await api('DELETE', '/boards/' + currentBoardId + '/clips/' + clipId);
+    const el = document.querySelector(`.clip[data-id="${clipId}"]`);
     clips = clips.filter(c => c.id !== clipId);
-    renderClips();
+    if (el) {
+      animateClipOut(el, () => {
+        renderedClipIds.delete(clipId);
+        renderClips();
+      });
+    } else {
+      renderedClipIds.delete(clipId);
+      renderClips();
+    }
   } catch (e) {
     showToast(t('deleteError'));
   }
@@ -368,7 +397,7 @@ function connectWS() {
       case 'clip-added':
         if (msg.boardId === currentBoardId && !clips.find(c => c.id === msg.clip.id)) {
           clips.unshift(msg.clip);
-          renderClips();
+          insertClipAnimated(msg.clip);
         }
         if (msg.boardId !== currentBoardId) {
           unreadCounts[msg.boardId] = (unreadCounts[msg.boardId] || 0) + 1;
@@ -398,8 +427,17 @@ function connectWS() {
         break;
       case 'clip-deleted':
         if (msg.boardId === currentBoardId) {
+          const clipEl = document.querySelector(`.clip[data-id="${msg.clipId}"]`);
           clips = clips.filter(c => c.id !== msg.clipId);
-          renderClips();
+          if (clipEl) {
+            animateClipOut(clipEl, () => {
+              renderedClipIds.delete(msg.clipId);
+              renderClips();
+            });
+          } else {
+            renderedClipIds.delete(msg.clipId);
+            renderClips();
+          }
         }
         break;
       case 'board-added':
@@ -593,141 +631,207 @@ function boardTooltip(board) {
   return t('expiresIn') + expiryLabel(remaining);
 }
 
+function createClipElement(clip) {
+  const el = document.createElement('div');
+  el.className = 'clip';
+  el.dataset.id = clip.id;
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'clip-header';
+  const typeLabel = document.createElement('span');
+  const typeLabels = { image: t('image'), file: t('file'), text: t('text') };
+  typeLabel.textContent = typeLabels[clip.type] || clip.type;
+  const time = document.createElement('span');
+  time.textContent = timeAgo(clip.createdAt);
+  time.dataset.ts = clip.createdAt;
+  header.appendChild(typeLabel);
+  header.appendChild(time);
+  el.appendChild(header);
+
+  // Content
+  const content = document.createElement('div');
+  content.className = 'clip-content';
+  if (clip.type === 'image') {
+    const img = document.createElement('img');
+    img.src = clip.imageUrl;
+    img.alt = t('pastedImage');
+    img.loading = 'lazy';
+    img.addEventListener('click', () => window.open(clip.imageUrl, '_blank'));
+    content.appendChild(img);
+  } else if (clip.type === 'file') {
+    const fileInfo = document.createElement('div');
+    fileInfo.className = 'file-info';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'file-name';
+    nameSpan.textContent = clip.originalName || 'file';
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'file-size';
+    sizeSpan.textContent = formatSize(clip.size);
+    fileInfo.appendChild(nameSpan);
+    fileInfo.appendChild(sizeSpan);
+    content.appendChild(fileInfo);
+    const ext = (clip.originalName || '').toLowerCase().split('.').pop();
+    if (ext === 'pdf') {
+      const embed = document.createElement('embed');
+      embed.src = clip.fileUrl;
+      embed.type = 'application/pdf';
+      embed.className = 'pdf-preview';
+      content.appendChild(embed);
+    } else if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
+      const video = document.createElement('video');
+      video.src = clip.fileUrl;
+      video.controls = true;
+      video.className = 'media-preview';
+      content.appendChild(video);
+    } else if (['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(ext)) {
+      const audio = document.createElement('audio');
+      audio.src = clip.fileUrl;
+      audio.controls = true;
+      audio.className = 'audio-preview';
+      content.appendChild(audio);
+    }
+  } else {
+    const pre = document.createElement('pre');
+    pre.innerHTML = linkify(clip.content);
+    content.appendChild(pre);
+    requestAnimationFrame(() => {
+      if (pre.scrollHeight > 400) {
+        pre.classList.add('collapsible', 'collapsed');
+        const fullHeight = pre.scrollHeight;
+        const btn = document.createElement('button');
+        btn.className = 'expand-btn';
+        btn.textContent = t('showMore');
+        btn.addEventListener('click', () => {
+          const isCollapsed = pre.classList.contains('collapsed');
+          if (isCollapsed) {
+            pre.style.maxHeight = fullHeight + 'px';
+            pre.classList.remove('collapsed');
+            pre.classList.add('expanded');
+          } else {
+            pre.style.maxHeight = '400px';
+            pre.classList.add('collapsed');
+            pre.classList.remove('expanded');
+          }
+          btn.textContent = isCollapsed ? t('showLess') : t('showMore');
+        });
+        content.appendChild(btn);
+      }
+    });
+    // Link previews
+    renderLinkPreviews(content, clip.content);
+  }
+  el.appendChild(content);
+
+  // Actions
+  const actions = document.createElement('div');
+  actions.className = 'clip-actions';
+
+  if (clip.type !== 'file') {
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = t('copy');
+    copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
+    actions.appendChild(copyBtn);
+  }
+
+  if (clip.type === 'image' || clip.type === 'file') {
+    const dlBtn = document.createElement('button');
+    dlBtn.textContent = t('download');
+    dlBtn.addEventListener('click', () => downloadClip(clip));
+    actions.appendChild(dlBtn);
+  }
+
+  const currentBoard = boards.find(b => b.id === currentBoardId);
+  if (!currentBoard || !currentBoard.locked) {
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-delete';
+    delBtn.textContent = t('delete');
+    let deleteConfirmTimeout;
+    delBtn.addEventListener('click', () => {
+      if (delBtn.dataset.confirm) {
+        clearTimeout(deleteConfirmTimeout);
+        deleteClip(clip.id);
+        return;
+      }
+      delBtn.dataset.confirm = '1';
+      delBtn.textContent = t('sure');
+      delBtn.classList.add('btn-confirm-active');
+      deleteConfirmTimeout = setTimeout(() => {
+        delete delBtn.dataset.confirm;
+        delBtn.textContent = t('delete');
+        delBtn.classList.remove('btn-confirm-active');
+      }, 3000);
+    });
+    actions.appendChild(delBtn);
+  }
+
+  el.appendChild(actions);
+  return el;
+}
+
 function renderClips() {
   const container = $('#clips');
 
   if (!clips.length) {
+    renderedClipIds.clear();
     container.innerHTML = '<div class="empty-state">' + escapeHtml(t('empty')) + '</div>';
     return;
   }
 
   container.innerHTML = '';
   clips.forEach(clip => {
-    const el = document.createElement('div');
-    el.className = 'clip';
-    el.dataset.id = clip.id;
+    container.appendChild(createClipElement(clip));
+  });
+  renderedClipIds = new Set(clips.map(c => c.id));
+}
 
-    // Header
-    const header = document.createElement('div');
-    header.className = 'clip-header';
-    const typeLabel = document.createElement('span');
-    const typeLabels = { image: t('image'), file: t('file'), text: t('text') };
-    typeLabel.textContent = typeLabels[clip.type] || clip.type;
-    const time = document.createElement('span');
-    time.textContent = timeAgo(clip.createdAt);
-    time.dataset.ts = clip.createdAt;
-    header.appendChild(typeLabel);
-    header.appendChild(time);
-    el.appendChild(header);
+function insertClipAnimated(clip) {
+  const container = $('#clips');
+  const empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
 
-    // Content
-    const content = document.createElement('div');
-    content.className = 'clip-content';
-    if (clip.type === 'image') {
-      const img = document.createElement('img');
-      img.src = clip.imageUrl;
-      img.alt = t('pastedImage');
-      img.loading = 'lazy';
-      img.addEventListener('click', () => window.open(clip.imageUrl, '_blank'));
-      content.appendChild(img);
-    } else if (clip.type === 'file') {
-      const fileInfo = document.createElement('div');
-      fileInfo.className = 'file-info';
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'file-name';
-      nameSpan.textContent = clip.originalName || 'file';
-      const sizeSpan = document.createElement('span');
-      sizeSpan.className = 'file-size';
-      sizeSpan.textContent = formatSize(clip.size);
-      fileInfo.appendChild(nameSpan);
-      fileInfo.appendChild(sizeSpan);
-      content.appendChild(fileInfo);
-      const ext = (clip.originalName || '').toLowerCase().split('.').pop();
-      if (ext === 'pdf') {
-        const embed = document.createElement('embed');
-        embed.src = clip.fileUrl;
-        embed.type = 'application/pdf';
-        embed.className = 'pdf-preview';
-        content.appendChild(embed);
-      } else if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
-        const video = document.createElement('video');
-        video.src = clip.fileUrl;
-        video.controls = true;
-        video.className = 'media-preview';
-        content.appendChild(video);
-      } else if (['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(ext)) {
-        const audio = document.createElement('audio');
-        audio.src = clip.fileUrl;
-        audio.controls = true;
-        audio.className = 'audio-preview';
-        content.appendChild(audio);
-      }
-    } else {
-      const pre = document.createElement('pre');
-      pre.innerHTML = linkify(clip.content);
-      content.appendChild(pre);
-      requestAnimationFrame(() => {
-        if (pre.scrollHeight > 400) {
-          pre.classList.add('collapsed');
-          const btn = document.createElement('button');
-          btn.className = 'expand-btn';
-          btn.textContent = t('showMore');
-          btn.addEventListener('click', () => {
-            const collapsed = pre.classList.toggle('collapsed');
-            btn.textContent = collapsed ? t('showMore') : t('showLess');
-          });
-          content.appendChild(btn);
-        }
-      });
-      // Link previews
-      renderLinkPreviews(content, clip.content);
-    }
-    el.appendChild(content);
+  const el = createClipElement(clip);
 
-    // Actions
-    const actions = document.createElement('div');
-    actions.className = 'clip-actions';
+  // For images/files: simple fade-in (height unknown until loaded)
+  if (clip.type !== 'text') {
+    el.classList.add('clip-fade-enter');
+    container.prepend(el);
+    renderedClipIds.add(clip.id);
+    return;
+  }
 
-    if (clip.type !== 'file') {
-      const copyBtn = document.createElement('button');
-      copyBtn.textContent = t('copy');
-      copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
-      actions.appendChild(copyBtn);
-    }
+  // For text: smooth height expand
+  el.style.position = 'absolute';
+  el.style.visibility = 'hidden';
+  el.style.width = container.offsetWidth + 'px';
+  container.appendChild(el);
+  const fullHeight = el.offsetHeight;
+  el.remove();
 
-    if (clip.type === 'image' || clip.type === 'file') {
-      const dlBtn = document.createElement('button');
-      dlBtn.textContent = t('download');
-      dlBtn.addEventListener('click', () => downloadClip(clip));
-      actions.appendChild(dlBtn);
-    }
+  el.style.position = '';
+  el.style.visibility = '';
+  el.style.width = '';
+  el.classList.add('clip-animating');
+  el.style.maxHeight = '0px';
+  el.style.paddingTop = '0px';
+  el.style.paddingBottom = '0px';
+  el.style.marginBottom = '0px';
+  el.style.opacity = '0';
+  container.prepend(el);
+  renderedClipIds.add(clip.id);
 
-    const currentBoard = boards.find(b => b.id === currentBoardId);
-    if (!currentBoard || !currentBoard.locked) {
-      const delBtn = document.createElement('button');
-      delBtn.className = 'btn-delete';
-      delBtn.textContent = t('delete');
-      let deleteConfirmTimeout;
-      delBtn.addEventListener('click', () => {
-        if (delBtn.dataset.confirm) {
-          clearTimeout(deleteConfirmTimeout);
-          deleteClip(clip.id);
-          return;
-        }
-        delBtn.dataset.confirm = '1';
-        delBtn.textContent = t('sure');
-        delBtn.classList.add('btn-confirm-active');
-        deleteConfirmTimeout = setTimeout(() => {
-          delete delBtn.dataset.confirm;
-          delBtn.textContent = t('delete');
-          delBtn.classList.remove('btn-confirm-active');
-        }, 3000);
-      });
-      actions.appendChild(delBtn);
-    }
-
-    el.appendChild(actions);
-    container.appendChild(el);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      el.style.maxHeight = fullHeight + 'px';
+      el.style.paddingTop = '';
+      el.style.paddingBottom = '';
+      el.style.marginBottom = '';
+      el.style.opacity = '1';
+      el.addEventListener('transitionend', () => {
+        el.classList.remove('clip-animating');
+        el.style.maxHeight = '';
+      }, { once: true });
+    });
   });
 }
 
@@ -853,6 +957,14 @@ $('#text-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     sendText();
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = e.target;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    ta.value = ta.value.substring(0, start) + '\t' + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = start + 1;
   }
 });
 
