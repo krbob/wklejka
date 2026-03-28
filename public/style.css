@@ -449,16 +449,26 @@ main {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 8px 0;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-left: 3px solid var(--primary);
+  border-radius: 6px;
+}
+
+.file-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
 }
 
 .file-name {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.85rem;
   font-weight: 500;
   word-break: break-all;
 }
 
 .file-size {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -737,6 +747,13 @@ main {
 .clip-actions button.copy-success {
   color: #22c55e;
   border-color: #22c55e;
+  animation: pulse-success 0.35s ease;
+}
+
+@keyframes pulse-success {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.1); }
+  100% { transform: scale(1); }
 }
 
 /* --- Delete confirmation --- */

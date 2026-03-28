@@ -662,6 +662,10 @@ function createClipElement(clip) {
   } else if (clip.type === 'file') {
     const fileInfo = document.createElement('div');
     fileInfo.className = 'file-info';
+    const icon = document.createElement('span');
+    icon.className = 'file-icon';
+    icon.textContent = fileIcon(clip.originalName);
+    fileInfo.appendChild(icon);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
     nameSpan.textContent = clip.originalName || 'file';
@@ -860,11 +864,11 @@ async function copyClip(clip, btn) {
       ]);
     }
     if (btn) {
-      const original = btn.textContent;
+      clearTimeout(btn._copyTimeout);
       btn.textContent = '\u2713';
       btn.classList.add('copy-success');
-      setTimeout(() => {
-        btn.textContent = original;
+      btn._copyTimeout = setTimeout(() => {
+        btn.textContent = t('copy');
         btn.classList.remove('copy-success');
       }, 1500);
     }
@@ -1003,6 +1007,22 @@ function escapeHtml(text) {
 function linkify(text) {
   const escaped = escapeHtml(text);
   return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+function fileIcon(name) {
+  const ext = (name || '').toLowerCase().split('.').pop();
+  const icons = {
+    pdf: '\uD83D\uDCC4', doc: '\uD83D\uDCC4', docx: '\uD83D\uDCC4', odt: '\uD83D\uDCC4',
+    xls: '\uD83D\uDCCA', xlsx: '\uD83D\uDCCA', csv: '\uD83D\uDCCA',
+    zip: '\uD83D\uDCE6', rar: '\uD83D\uDCE6', '7z': '\uD83D\uDCE6', tar: '\uD83D\uDCE6', gz: '\uD83D\uDCE6',
+    mp3: '\uD83C\uDFB5', wav: '\uD83C\uDFB5', ogg: '\uD83C\uDFB5', flac: '\uD83C\uDFB5', aac: '\uD83C\uDFB5', m4a: '\uD83C\uDFB5',
+    mp4: '\uD83C\uDFAC', webm: '\uD83C\uDFAC', mov: '\uD83C\uDFAC', avi: '\uD83C\uDFAC',
+    png: '\uD83D\uDDBC\uFE0F', jpg: '\uD83D\uDDBC\uFE0F', jpeg: '\uD83D\uDDBC\uFE0F', gif: '\uD83D\uDDBC\uFE0F', svg: '\uD83D\uDDBC\uFE0F', webp: '\uD83D\uDDBC\uFE0F',
+    txt: '\uD83D\uDCC3', md: '\uD83D\uDCC3', log: '\uD83D\uDCC3',
+    js: '\uD83D\uDCBB', ts: '\uD83D\uDCBB', py: '\uD83D\uDCBB', rb: '\uD83D\uDCBB', go: '\uD83D\uDCBB', rs: '\uD83D\uDCBB', java: '\uD83D\uDCBB', c: '\uD83D\uDCBB', cpp: '\uD83D\uDCBB', h: '\uD83D\uDCBB',
+    json: '\uD83D\uDCBB', xml: '\uD83D\uDCBB', yaml: '\uD83D\uDCBB', yml: '\uD83D\uDCBB', toml: '\uD83D\uDCBB',
+  };
+  return icons[ext] || '\uD83D\uDCC1';
 }
 
 function formatSize(bytes) {
