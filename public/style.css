@@ -39,6 +39,10 @@
   --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: var(--bg);
@@ -165,9 +169,13 @@ nav#tabs::-webkit-scrollbar {
   background: rgba(255, 255, 255, 0.3);
 }
 
-.tab.tab-animating {
-  overflow: hidden;
-  transition: max-width 0.3s ease, opacity 0.3s ease, padding-left 0.3s ease, padding-right 0.3s ease;
+.tab.tab-enter {
+  animation: tabFadeIn 0.2s ease both;
+}
+
+@keyframes tabFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .tab.add-tab {
@@ -282,25 +290,22 @@ main {
   margin-bottom: 12px;
 }
 
-.clip.clip-animating {
-  overflow: hidden;
-  transition: max-height 0.3s ease, opacity 0.3s ease, transform 0.3s ease,
-              padding-top 0.3s ease, padding-bottom 0.3s ease, margin-bottom 0.3s ease;
+.clip.clip-enter {
+  animation: clipFadeIn 0.2s ease both;
 }
 
-.clip.clip-fade-enter {
-  animation: clipFadeIn 0.3s ease both;
+.clip.clip-exit {
+  animation: clipFadeOut 0.15s ease both;
 }
 
 @keyframes clipFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes clipFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 .clip-header {

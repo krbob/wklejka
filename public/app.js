@@ -264,21 +264,8 @@ function removeGhost(ghostId) {
 }
 
 function animateClipOut(el, callback) {
-  const height = el.offsetHeight;
-  el.classList.add('clip-animating');
-  el.style.maxHeight = height + 'px';
-  el.style.overflow = 'hidden';
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'scale(0.97)';
-      el.style.maxHeight = '0px';
-      el.style.paddingTop = '0px';
-      el.style.paddingBottom = '0px';
-      el.style.marginBottom = '0px';
-      el.addEventListener('transitionend', callback, { once: true });
-    });
-  });
+  el.classList.add('clip-exit');
+  el.addEventListener('animationend', callback, { once: true });
 }
 
 async function deleteClip(clipId) {
@@ -307,22 +294,7 @@ async function createBoard(name, expiresIn) {
 }
 
 function animateTabOut(boardId, callback) {
-  const tab = document.querySelector(`.tab[data-board-id="${boardId}"]`);
-  if (tab) {
-    tab.style.maxWidth = tab.offsetWidth + 'px';
-    tab.classList.add('tab-animating');
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        tab.style.maxWidth = '0px';
-        tab.style.paddingLeft = '0px';
-        tab.style.paddingRight = '0px';
-        tab.style.opacity = '0';
-        tab.addEventListener('transitionend', callback, { once: true });
-      });
-    });
-  } else {
-    callback();
-  }
+  callback();
 }
 
 async function deleteBoard(boardId) {
@@ -646,32 +618,7 @@ function renderTabs() {
   boards.forEach(board => {
     if (!renderedBoardIds.has(board.id)) {
       const tab = nav.querySelector(`.tab[data-board-id="${board.id}"]`);
-      if (tab) {
-        const fullWidth = tab.offsetWidth;
-        // Collapse instantly (no transition)
-        tab.style.transition = 'none';
-        tab.style.overflow = 'hidden';
-        tab.style.maxWidth = '0px';
-        tab.style.paddingLeft = '0px';
-        tab.style.paddingRight = '0px';
-        tab.style.opacity = '0';
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            // Now animate open
-            tab.classList.add('tab-animating');
-            tab.style.transition = '';
-            tab.style.maxWidth = fullWidth + 'px';
-            tab.style.paddingLeft = '';
-            tab.style.paddingRight = '';
-            tab.style.opacity = '1';
-            tab.addEventListener('transitionend', () => {
-              tab.classList.remove('tab-animating');
-              tab.style.maxWidth = '';
-              tab.style.overflow = '';
-            }, { once: true });
-          });
-        });
-      }
+      if (tab) tab.classList.add('tab-enter');
     }
   });
   renderedBoardIds = newBoardIds;
@@ -854,48 +801,9 @@ function insertClipAnimated(clip) {
   if (empty) empty.remove();
 
   const el = createClipElement(clip);
-
-  // For images/files: simple fade-in (height unknown until loaded)
-  if (clip.type !== 'text') {
-    el.classList.add('clip-fade-enter');
-    container.prepend(el);
-    renderedClipIds.add(clip.id);
-    return;
-  }
-
-  // For text: smooth height expand
-  el.style.position = 'absolute';
-  el.style.visibility = 'hidden';
-  el.style.width = container.offsetWidth + 'px';
-  container.appendChild(el);
-  const fullHeight = el.offsetHeight;
-  el.remove();
-
-  el.style.position = '';
-  el.style.visibility = '';
-  el.style.width = '';
-  el.classList.add('clip-animating');
-  el.style.maxHeight = '0px';
-  el.style.paddingTop = '0px';
-  el.style.paddingBottom = '0px';
-  el.style.marginBottom = '0px';
-  el.style.opacity = '0';
+  el.classList.add('clip-enter');
   container.prepend(el);
   renderedClipIds.add(clip.id);
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      el.style.maxHeight = fullHeight + 'px';
-      el.style.paddingTop = '';
-      el.style.paddingBottom = '';
-      el.style.marginBottom = '';
-      el.style.opacity = '1';
-      el.addEventListener('transitionend', () => {
-        el.classList.remove('clip-animating');
-        el.style.maxHeight = '';
-      }, { once: true });
-    });
-  });
 }
 
 // --- Clip actions ---
