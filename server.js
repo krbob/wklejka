@@ -9,12 +9,79 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const FILES_DIR = path.join(DATA_DIR, 'files');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
+const SAFE_IMAGE_MIME_TYPES = new Map([
+  ['image/png', 'png'],
+  ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
+  ['image/gif', 'gif'],
+  ['image/webp', 'webp'],
+]);
+const IMAGE_EXT_TO_MIME = new Map([
+  ['png', 'image/png'],
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'],
+  ['webp', 'image/webp'],
+]);
+const INLINE_FILE_MIME_TYPES = new Set([
+  'application/pdf',
+  'audio/aac',
+  'audio/flac',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/ogg',
+  'audio/wav',
+  'video/mp4',
+  'video/ogg',
+  'video/quicktime',
+  'video/webm',
+]);
+const INLINE_FILE_EXT_TO_MIME = new Map([
+  ['pdf', 'application/pdf'],
+  ['aac', 'audio/aac'],
+  ['flac', 'audio/flac'],
+  ['m4a', 'audio/mp4'],
+  ['mp3', 'audio/mpeg'],
+  ['ogg', 'audio/ogg'],
+  ['wav', 'audio/wav'],
+  ['mov', 'video/quicktime'],
+  ['mp4', 'video/mp4'],
+  ['webm', 'video/webm'],
+]);
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+function findClipByFilename(filename) {
+  for (const clips of Object.values(store.clips)) {
+    const clip = clips.find(item => item.filename === filename);
+    if (clip) return clip;
+  }
+  return null;
+}
+
+function safeDownloadName(name, fallback = 'file') {
+  return path.basename(String(name || fallback)).replace(/[\r\n"]/g, '_');
+}
+
+function setDownloadHeaders(res, { contentType, disposition, filename }) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${disposition}; filename="${safeDownloadName(filename)}"`);
+  if (contentType) res.type(contentType);
+}
+
+function guessImageMimeType(filename) {
+  const ext = path.extname(filename).slice(1).toLowerCase();
+  return IMAGE_EXT_TO_MIME.get(ext) || null;
+}
+
+function guessInlineFileMimeType(filename) {
+  const ext = path.extname(filename).slice(1).toLowerCase();
+  return INLINE_FILE_EXT_TO_MIME.get(ext) || null;
 }
 
 // --- Store ---
@@ -144,16 +211,19 @@ app.post('/api/boards/:id/clips', (req, res) => {
   const clip = { id: generateId(), type, createdAt: Date.now() };
 
   if (type === 'image') {
-    const match = content.match(/^data:image\/([\w+]+);base64,(.+)$/);
+    const match = content.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/);
     if (!match) return res.status(400).json({ error: 'Invalid image data' });
-    const ext = match[1] === 'jpeg' ? 'jpg' : match[1].replace('+xml', '');
+    const mimeType = match[1].toLowerCase();
+    const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
+    if (!ext) return res.status(400).json({ error: 'Unsupported image type' });
     const buffer = Buffer.from(match[2], 'base64');
     const filename = `${clip.id}.${ext}`;
     fs.writeFileSync(path.join(IMAGES_DIR, filename), buffer);
     clip.filename = filename;
+    clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
     clip.imageUrl = `/api/images/${filename}`;
   } else if (type === 'file') {
-    const match = content.match(/^data:([^;]*);base64,(.+)$/);
+    const match = content.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/);
     if (!match) return res.status(400).json({ error: 'Invalid file data' });
     const buffer = Buffer.from(match[2], 'base64');
     const originalName = req.body.originalName || 'file';
@@ -163,7 +233,9 @@ app.post('/api/boards/:id/clips', (req, res) => {
     clip.filename = filename;
     clip.originalName = originalName;
     clip.size = buffer.length;
+    clip.mimeType = match[1].toLowerCase();
     clip.fileUrl = `/api/files/${filename}`;
+    clip.previewUrl = `/api/files/${filename}/preview`;
   } else {
     clip.content = content;
   }
@@ -198,6 +270,10 @@ app.get('/api/images/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   const filepath = path.join(IMAGES_DIR, filename);
   if (!fs.existsSync(filepath)) return res.status(404).end();
+  const clip = findClipByFilename(filename);
+  const mimeType = clip?.mimeType || guessImageMimeType(filename);
+  if (!mimeType) return res.status(404).end();
+  setDownloadHeaders(res, { contentType: mimeType, disposition: 'inline', filename });
   res.sendFile(filepath);
 });
 
@@ -206,6 +282,29 @@ app.get('/api/files/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   const filepath = path.join(FILES_DIR, filename);
   if (!fs.existsSync(filepath)) return res.status(404).end();
+  const clip = findClipByFilename(filename);
+  setDownloadHeaders(res, {
+    contentType: clip?.mimeType || 'application/octet-stream',
+    disposition: 'attachment',
+    filename: clip?.originalName || filename,
+  });
+  res.sendFile(filepath);
+});
+
+app.get('/api/files/:filename/preview', (req, res) => {
+  const filename = path.basename(req.params.filename);
+  const filepath = path.join(FILES_DIR, filename);
+  if (!fs.existsSync(filepath)) return res.status(404).end();
+  const clip = findClipByFilename(filename);
+  const mimeType = clip?.mimeType || guessInlineFileMimeType(filename);
+  if (!mimeType || !INLINE_FILE_MIME_TYPES.has(mimeType)) {
+    return res.status(415).json({ error: 'Preview not available' });
+  }
+  setDownloadHeaders(res, {
+    contentType: mimeType,
+    disposition: 'inline',
+    filename: clip?.originalName || filename,
+  });
   res.sendFile(filepath);
 });
 

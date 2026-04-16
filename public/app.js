@@ -666,6 +666,7 @@ function createClipElement(clip) {
     img.addEventListener('click', () => window.open(clip.imageUrl, '_blank'));
     content.appendChild(img);
   } else if (clip.type === 'file') {
+    const previewUrl = clip.previewUrl || `${clip.fileUrl}/preview`;
     const fileInfo = document.createElement('div');
     fileInfo.className = 'file-info';
     const icon = document.createElement('span');
@@ -684,19 +685,19 @@ function createClipElement(clip) {
     const ext = (clip.originalName || '').toLowerCase().split('.').pop();
     if (ext === 'pdf') {
       const embed = document.createElement('embed');
-      embed.src = clip.fileUrl;
+      embed.src = previewUrl;
       embed.type = 'application/pdf';
       embed.className = 'pdf-preview';
       content.appendChild(embed);
     } else if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
       const video = document.createElement('video');
-      video.src = clip.fileUrl;
+      video.src = previewUrl;
       video.controls = true;
       video.className = 'media-preview';
       content.appendChild(video);
     } else if (['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(ext)) {
       const audio = document.createElement('audio');
-      audio.src = clip.fileUrl;
+      audio.src = previewUrl;
       audio.controls = true;
       audio.className = 'audio-preview';
       content.appendChild(audio);

@@ -84,6 +84,21 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"type":"file","content":"data:text/plain;base64,aGVsbG8=","originalName":"test.txt"}' | grep -q '"type":"file"'
 
+          # HTML uploads must download, not execute inline
+          HTML_CLIP=$(curl -fsS -X POST "${base}/api/boards/default/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"file","content":"data:text/html;base64,PGgxPmhlbGxvPC9oMT4=","originalName":"test.html"}')
+          HTML_NAME=$(echo "$HTML_CLIP" | grep -o '"filename":"[^"]*"' | head -1 | cut -d'"' -f4)
+          curl -fsSI "${base}/api/files/${HTML_NAME}" | grep -qi 'Content-Disposition: attachment'
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/files/${HTML_NAME}/preview")
+          [ "$HTTP_CODE" = "415" ] || { echo "Expected 415, got $HTTP_CODE"; exit 1; }
+
+          # SVG image clips are rejected
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${base}/api/boards/default/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"image","content":"data:image/svg+xml;base64,PHN2Zy8+"}')
+          [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
+
           # Board with expiration
           curl -fsS -X POST "${base}/api/boards" \
             -H 'Content-Type: application/json' \
