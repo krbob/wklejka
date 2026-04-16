@@ -187,15 +187,18 @@ jobs:
           set -euo pipefail
           base="http://localhost:${{ env.APP_PORT }}"
 
-          # Fetch preview of own page (always reachable in CI)
-          curl -fsS "${base}/api/link-preview?url=${base}" | grep -q '"title"'
+          # Fetch preview of a public page
+          curl -fsS --get "${base}/api/link-preview" \
+            --data-urlencode "url=https://example.com" | grep -q '"title"'
 
           # Invalid URL should return 400
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/link-preview?url=notaurl")
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --get "${base}/api/link-preview" \
+            --data-urlencode "url=notaurl")
           [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
 
           # Loopback/private targets are blocked
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/link-preview?url=http://127.0.0.1:${{ env.APP_PORT }}")
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --get "${base}/api/link-preview" \
+            --data-urlencode "url=http://127.0.0.1:${{ env.APP_PORT }}")
           [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
 
           echo "Link preview tests passed"
