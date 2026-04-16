@@ -483,7 +483,7 @@ setInterval(() => {
   saveStore();
 }, 60000);
 
-// --- Orphan file cleanup (every 24h) ---
+// --- Orphan file cleanup on startup ---
 
 function cleanOrphanFiles() {
   const referencedFiles = new Set();

@@ -41,6 +41,7 @@ docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest
 - **Link previews** – URLs in text clips automatically show a preview card with title, description, and image.
 - **Dark mode** – auto-detects system preference, manual toggle in header. Persisted across sessions.
 - **Persistent storage** – data lives in the `data/` directory and survives container restarts.
+- **Startup orphan cleanup** – unreferenced files in `data/files` and `data/images` are removed when the app starts.
 - **Multilingual** – UI automatically switches between Polish and English based on browser language.
 
 ## UI language
