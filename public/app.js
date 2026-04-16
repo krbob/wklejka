@@ -875,15 +875,20 @@ document.addEventListener('paste', (e) => {
 // Drag & drop
 let dragCounter = 0;
 
+function isFileDrag(e) {
+  const types = e.dataTransfer?.types;
+  return !!types && Array.from(types).includes('Files');
+}
+
 document.addEventListener('dragenter', (e) => {
-  if (isDraggingTab) return;
+  if (isDraggingTab || !isFileDrag(e)) return;
   e.preventDefault();
   dragCounter++;
   $('#drop-overlay').classList.add('visible');
 });
 
 document.addEventListener('dragleave', (e) => {
-  if (isDraggingTab) return;
+  if (isDraggingTab || !isFileDrag(e)) return;
   e.preventDefault();
   dragCounter--;
   if (dragCounter <= 0) {
@@ -893,12 +898,12 @@ document.addEventListener('dragleave', (e) => {
 });
 
 document.addEventListener('dragover', (e) => {
-  if (isDraggingTab) return;
+  if (isDraggingTab || !isFileDrag(e)) return;
   e.preventDefault();
 });
 
 document.addEventListener('drop', (e) => {
-  if (isDraggingTab) return;
+  if (isDraggingTab || !isFileDrag(e)) return;
   e.preventDefault();
   dragCounter = 0;
   $('#drop-overlay').classList.remove('visible');
