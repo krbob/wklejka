@@ -221,11 +221,20 @@ app.post('/api/boards', (req, res) => {
 app.put('/api/boards/reorder', (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
-  const reordered = ids.map(id => store.boards.find(b => b.id === id)).filter(Boolean);
-  store.boards.forEach(b => {
-    if (!reordered.find(r => r.id === b.id)) reordered.push(b);
-  });
-  store.boards = reordered;
+  const currentIds = store.boards.map(board => board.id);
+  if (ids.length !== currentIds.length) {
+    return res.status(400).json({ error: 'ids must include every board exactly once' });
+  }
+  const uniqueIds = new Set(ids);
+  if (uniqueIds.size !== ids.length) {
+    return res.status(400).json({ error: 'ids must be unique' });
+  }
+  const knownIds = new Set(currentIds);
+  if (ids.some(id => !knownIds.has(id))) {
+    return res.status(400).json({ error: 'ids contain an unknown board' });
+  }
+  const boardById = new Map(store.boards.map(board => [board.id, board]));
+  store.boards = ids.map(id => boardById.get(id));
   saveStore();
   broadcast({ type: 'boards-reordered', ids: store.boards.map(b => b.id) });
   res.json({ ok: true });

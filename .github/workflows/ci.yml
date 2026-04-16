@@ -131,6 +131,12 @@ jobs:
             -H 'Content-Type: application/json' \
             -d "{\"ids\":[\"default\",\"${ID_B}\",\"${ID_A}\"]}" | grep -q '"ok"'
 
+          # Duplicate ids are rejected
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${base}/api/boards/reorder" \
+            -H 'Content-Type: application/json' \
+            -d "{\"ids\":[\"default\",\"default\",\"${ID_A}\"]}")
+          [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
+
           # Lock board
           curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
             -H 'Content-Type: application/json' \
