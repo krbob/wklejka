@@ -127,14 +127,34 @@ jobs:
             -d '{"name":"Renamed A"}' | grep -q '"Renamed A"'
 
           # Reorder boards
+          BOARDS_JSON=$(curl -fsS "${base}/api/boards")
+          REORDER_PAYLOAD=$(BOARDS_JSON="$BOARDS_JSON" ID_A="$ID_A" ID_B="$ID_B" python3 - <<'PY'
+          import json, os
+
+          boards = json.loads(os.environ["BOARDS_JSON"])
+          id_a = os.environ["ID_A"]
+          id_b = os.environ["ID_B"]
+          rest = [board["id"] for board in boards if board["id"] not in {"default", id_a, id_b}]
+          print(json.dumps({"ids": ["default", id_b, id_a, *rest]}, separators=(",", ":")))
+          PY
+          )
           curl -fsS -X PUT "${base}/api/boards/reorder" \
             -H 'Content-Type: application/json' \
-            -d "{\"ids\":[\"default\",\"${ID_B}\",\"${ID_A}\"]}" | grep -q '"ok"'
+            -d "${REORDER_PAYLOAD}" | grep -q '"ok"'
 
           # Duplicate ids are rejected
+          DUPLICATE_REORDER_PAYLOAD=$(BOARDS_JSON="$BOARDS_JSON" ID_A="$ID_A" python3 - <<'PY'
+          import json, os
+
+          boards = json.loads(os.environ["BOARDS_JSON"])
+          id_a = os.environ["ID_A"]
+          rest = [board["id"] for board in boards if board["id"] not in {"default", id_a}]
+          print(json.dumps({"ids": ["default", "default", id_a, *rest[:-1]]}, separators=(",", ":")))
+          PY
+          )
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${base}/api/boards/reorder" \
             -H 'Content-Type: application/json' \
-            -d "{\"ids\":[\"default\",\"default\",\"${ID_A}\"]}")
+            -d "${DUPLICATE_REORDER_PAYLOAD}")
           [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
 
           # Lock board
