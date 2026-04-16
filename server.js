@@ -3,6 +3,8 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns').promises;
+const net = require('net');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -48,6 +50,7 @@ const INLINE_FILE_EXT_TO_MIME = new Map([
   ['mp4', 'video/mp4'],
   ['webm', 'video/webm'],
 ]);
+const MAX_LINK_PREVIEW_REDIRECTS = 5;
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -82,6 +85,79 @@ function guessImageMimeType(filename) {
 function guessInlineFileMimeType(filename) {
   const ext = path.extname(filename).slice(1).toLowerCase();
   return INLINE_FILE_EXT_TO_MIME.get(ext) || null;
+}
+
+function isPrivateIpv4(address) {
+  const parts = address.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
+  return parts[0] === 10
+    || parts[0] === 127
+    || (parts[0] === 169 && parts[1] === 254)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 192 && parts[1] === 168)
+    || parts[0] === 0;
+}
+
+function isPrivateIpv6(address) {
+  const normalized = address.toLowerCase();
+  return normalized === '::1'
+    || normalized === '::'
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('fe80:');
+}
+
+function isPrivateAddress(address) {
+  if (address.startsWith('::ffff:')) {
+    return isPrivateIpv4(address.slice(7));
+  }
+  const family = net.isIP(address);
+  if (family === 4) return isPrivateIpv4(address);
+  if (family === 6) return isPrivateIpv6(address);
+  return false;
+}
+
+async function assertSafePreviewTarget(urlString) {
+  const url = new URL(urlString);
+  const hostname = url.hostname.toLowerCase();
+
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    throw new Error('URL points to a local address');
+  }
+  if (net.isIP(hostname) && isPrivateAddress(hostname)) {
+    throw new Error('URL points to a private address');
+  }
+
+  const resolved = await dns.lookup(hostname, { all: true, verbatim: true });
+  if (!resolved.length || resolved.some(({ address }) => isPrivateAddress(address))) {
+    throw new Error('URL resolves to a private address');
+  }
+
+  return url;
+}
+
+async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_REDIRECTS) {
+  const url = await assertSafePreviewTarget(urlString);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Wklejka/1.0 (link-preview)' },
+      redirect: 'manual',
+    });
+
+    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
+      if (redirectsLeft <= 0) throw new Error('Too many redirects');
+      const nextUrl = new URL(response.headers.get('location'), url).href;
+      return fetchPreviewResponse(nextUrl, redirectsLeft - 1);
+    }
+
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // --- Store ---
@@ -315,14 +391,7 @@ app.get('/api/link-preview', async (req, res) => {
     return res.status(400).json({ error: 'Invalid URL' });
   }
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Wklejka/1.0 (link-preview)' },
-      redirect: 'follow',
-    });
-    clearTimeout(timeout);
+    const response = await fetchPreviewResponse(url);
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('text/html')) {
       return res.json({ title: '', description: '', image: '' });
@@ -358,7 +427,10 @@ app.get('/api/link-preview', async (req, res) => {
       description: description.substring(0, 500),
       image: image || '',
     });
-  } catch {
+  } catch (error) {
+    if (/private address|local address|Too many redirects/i.test(error.message)) {
+      return res.status(400).json({ error: 'URL not allowed' });
+    }
     res.status(500).json({ error: 'Failed to fetch' });
   }
 });
