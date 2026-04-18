@@ -1145,3 +1145,9 @@ setInterval(() => {
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (themeMode === 'auto') applyTheme();
 });
+
+// --- Service Worker ---
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+}
