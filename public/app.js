@@ -153,6 +153,11 @@ function applyTheme() {
     document.documentElement.dataset.theme = themeMode;
   }
   updateThemeToggle();
+  // Update theme-color meta for standalone PWA status bar
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+    meta.setAttribute('content', isDark ? '#1e293b' : '#ffffff');
+  });
 }
 
 function initTheme() {

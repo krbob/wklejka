@@ -41,6 +41,8 @@
 
 html {
   scrollbar-gutter: stable;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -118,7 +120,7 @@ nav#tabs::-webkit-scrollbar {
 }
 
 .tab {
-  padding: 7px 14px;
+  padding: 10px 14px;
   border-radius: 8px;
   cursor: pointer;
   border: none;
@@ -217,7 +219,7 @@ main {
   border-radius: 8px;
   padding: 12px;
   font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 0.95rem;
+  font-size: 1rem;
   tab-size: 2;
   resize: vertical;
   outline: none;
@@ -596,7 +598,7 @@ main {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-family: inherit;
   background: var(--surface);
   color: var(--text);
@@ -620,7 +622,7 @@ main {
 
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%) translateY(80px);
   background: var(--text);
