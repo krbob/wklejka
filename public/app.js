@@ -35,6 +35,8 @@ const i18n = {
     file: 'Plik',
     attachFile: 'Za\u0142\u0105cz plik',
     uploading: 'Przesy\u0142anie...',
+    payloadTooLarge: 'Plik jest za du\u017cy',
+    payloadTooLargeWithLimit: 'Plik jest za du\u017cy (maks. %s)',
     pastedImage: 'Wklejony obrazek',
     dropHereFiles: 'Upu\u015b\u0107 pliki tutaj',
     newTabTitle: 'Nowa karta',
@@ -88,6 +90,8 @@ const i18n = {
     file: 'File',
     attachFile: 'Attach file',
     uploading: 'Uploading...',
+    payloadTooLarge: 'File is too large',
+    payloadTooLargeWithLimit: 'File is too large (max %s)',
     pastedImage: 'Pasted image',
     dropHereFiles: 'Drop files here',
     newTabTitle: 'New tab',
@@ -204,7 +208,26 @@ async function api(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch('/api' + path, opts);
-  if (!res.ok) throw new Error(res.statusText);
+  if (!res.ok) {
+    let message = '';
+    const contentType = res.headers.get('content-type') || '';
+    try {
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        message = data.error || data.message || '';
+      } else {
+        message = (await res.text()).trim();
+      }
+    } catch {}
+    if (res.status === 413) {
+      const maxSize = message.match(/\(max ([^)]+)\)/i)?.[1];
+      message = maxSize
+        ? t('payloadTooLargeWithLimit').replace('%s', maxSize)
+        : t('payloadTooLarge');
+    }
+    if (!message) message = res.statusText || `HTTP ${res.status}`;
+    throw new Error(message);
+  }
   return res.json();
 }
 

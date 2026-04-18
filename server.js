@@ -51,6 +51,13 @@ const INLINE_FILE_EXT_TO_MIME = new Map([
   ['webm', 'video/webm'],
 ]);
 const MAX_LINK_PREVIEW_REDIRECTS = 5;
+const DEFAULT_MAX_CLIP_BINARY_BYTES = 100 * 1024 * 1024;
+const MAX_CLIP_BINARY_BYTES = (() => {
+  const parsed = Number.parseInt(process.env.MAX_CLIP_BINARY_BYTES || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_CLIP_BINARY_BYTES;
+})();
+// Base64 expands binary payloads by roughly 33%; keep some extra headroom for the data URL prefix and JSON.
+const JSON_BODY_LIMIT_BYTES = Math.ceil(MAX_CLIP_BINARY_BYTES * 1.37) + 1024 * 1024;
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -85,6 +92,28 @@ function guessImageMimeType(filename) {
 function guessInlineFileMimeType(filename) {
   const ext = path.extname(filename).slice(1).toLowerCase();
   return INLINE_FILE_EXT_TO_MIME.get(ext) || null;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIdx = -1;
+  while (value >= 1024 && unitIdx < units.length - 1) {
+    value /= 1024;
+    unitIdx++;
+  }
+  return `${Number.isInteger(value) ? value : value.toFixed(1)} ${units[unitIdx]}`;
+}
+
+function createFileTooLargeError() {
+  const error = new Error(`File too large (max ${formatBytes(MAX_CLIP_BINARY_BYTES)})`);
+  error.status = 413;
+  return error;
+}
+
+function assertWithinUploadLimit(buffer) {
+  if (buffer.length > MAX_CLIP_BINARY_BYTES) throw createFileTooLargeError();
 }
 
 function isPrivateIpv4(address) {
@@ -196,7 +225,7 @@ loadStore();
 // --- Express ---
 
 const app = express();
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Boards
@@ -302,6 +331,7 @@ app.post('/api/boards/:id/clips', (req, res) => {
     const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
     if (!ext) return res.status(400).json({ error: 'Unsupported image type' });
     const buffer = Buffer.from(match[2], 'base64');
+    assertWithinUploadLimit(buffer);
     const filename = `${clip.id}.${ext}`;
     fs.writeFileSync(path.join(IMAGES_DIR, filename), buffer);
     clip.filename = filename;
@@ -311,6 +341,7 @@ app.post('/api/boards/:id/clips', (req, res) => {
     const match = content.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/);
     if (!match) return res.status(400).json({ error: 'Invalid file data' });
     const buffer = Buffer.from(match[2], 'base64');
+    assertWithinUploadLimit(buffer);
     const originalName = req.body.originalName || 'file';
     const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filename = `${clip.id}_${safeName}`;
@@ -446,6 +477,9 @@ app.get('/api/link-preview', async (req, res) => {
 
 // Error handler – silence expected client errors (aborted uploads, bad JSON, too large)
 app.use((err, _req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: createFileTooLargeError().message });
+  }
   if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });
   next(err);
 });
