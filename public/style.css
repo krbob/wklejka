@@ -324,6 +324,11 @@ main {
   color: var(--text-secondary);
 }
 
+.clip-content {
+  /* Safari/WebKit can paint text selection past the clip bounds without paint containment. */
+  contain: paint;
+}
+
 .clip-content pre {
   white-space: pre-wrap;
   word-break: break-word;
