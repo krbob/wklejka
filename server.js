@@ -74,13 +74,37 @@ function findClipByFilename(filename) {
   return null;
 }
 
-function safeDownloadName(name, fallback = 'file') {
-  return path.basename(String(name || fallback)).replace(/[\r\n"]/g, '_');
+function downloadBasename(name, fallback = 'file') {
+  const normalized = String(name || fallback).replace(/\\/g, '/');
+  const base = path.basename(normalized).replace(/[\0\r\n]/g, '_');
+  return base || fallback;
+}
+
+function safeAsciiDownloadName(name, fallback = 'file') {
+  const ascii = downloadBasename(name, fallback)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '_')
+    .replace(/["\\;]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return ascii || fallback;
+}
+
+function encodeRFC5987Value(value) {
+  return encodeURIComponent(value)
+    .replace(/['()*]/g, (char) => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function contentDisposition(disposition, filename) {
+  const name = downloadBasename(filename);
+  const fallback = safeAsciiDownloadName(name);
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeRFC5987Value(name)}`;
 }
 
 function setDownloadHeaders(res, { contentType, disposition, filename }) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `${disposition}; filename="${safeDownloadName(filename)}"`);
+  res.setHeader('Content-Disposition', contentDisposition(disposition, filename));
   if (contentType) res.type(contentType);
 }
 
