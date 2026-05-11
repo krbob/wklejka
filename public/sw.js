@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wklejka-v1';
+const CACHE_NAME = 'wklejka-v2';
 const SHELL_ASSETS = [
   '/',
   '/style.css',

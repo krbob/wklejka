@@ -192,6 +192,12 @@ let boards = [];
 let currentBoardId = 'default';
 let clips = [];
 let ws;
+let wsOpenedOnce = false;
+let syncPromise = null;
+let syncQueued = false;
+let lastSyncAt = 0;
+let clipStateVersion = 0;
+let loadClipsRequestId = 0;
 const unreadCounts = {};
 let hiddenClipCount = 0;
 let isDraggingTab = false;
@@ -235,14 +241,55 @@ async function api(method, path, body) {
 
 async function loadBoards() {
   boards = await api('GET', '/boards');
+  const boardIds = new Set(boards.map(b => b.id));
+  Object.keys(unreadCounts).forEach((id) => {
+    if (!boardIds.has(id)) delete unreadCounts[id];
+  });
+  if (boards.length && !boards.some(b => b.id === currentBoardId)) {
+    currentBoardId = boards[0].id;
+  }
   renderedBoardIds = new Set(boards.map(b => b.id));
   renderTabs();
 }
 
-async function loadClips() {
-  clips = await api('GET', '/boards/' + currentBoardId + '/clips');
+async function loadClips(boardId = currentBoardId) {
+  const requestId = ++loadClipsRequestId;
+  const version = clipStateVersion;
+  const nextClips = await api('GET', '/boards/' + boardId + '/clips');
+  if (requestId !== loadClipsRequestId || boardId !== currentBoardId) return;
+  if (version !== clipStateVersion) return loadClips(boardId);
+  clips = nextClips;
   renderedClipIds.clear();
   renderClips();
+}
+
+async function syncFromServer() {
+  if (syncPromise) {
+    syncQueued = true;
+    return syncPromise;
+  }
+
+  syncPromise = (async () => {
+    do {
+      syncQueued = false;
+      await loadBoards();
+      await loadClips();
+      lastSyncAt = Date.now();
+    } while (syncQueued);
+  })()
+    .catch((error) => {
+      console.warn('Sync failed:', error);
+    })
+    .finally(() => {
+      syncPromise = null;
+    });
+
+  return syncPromise;
+}
+
+function syncAfterResume() {
+  if (Date.now() - lastSyncAt < 1000) return;
+  syncFromServer();
 }
 
 async function sendClip(type, content, originalName) {
@@ -257,6 +304,7 @@ async function sendClip(type, content, originalName) {
     removeGhost(ghostId);
     if (!clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
+      clipStateVersion++;
       insertClipAnimated(clip);
     }
   } catch (e) {
@@ -301,6 +349,7 @@ async function deleteClip(clipId) {
     await api('DELETE', '/boards/' + currentBoardId + '/clips/' + clipId);
     const el = document.querySelector(`.clip[data-id="${clipId}"]`);
     clips = clips.filter(c => c.id !== clipId);
+    clipStateVersion++;
     if (el) {
       animateClipOut(el, () => {
         renderedClipIds.delete(clipId);
@@ -410,6 +459,8 @@ function connectWS() {
   ws.onopen = () => {
     $('#status').className = 'status online';
     $('#status').title = t('connected');
+    if (wsOpenedOnce || !lastSyncAt) syncFromServer();
+    wsOpenedOnce = true;
   };
 
   ws.onmessage = (e) => {
@@ -418,6 +469,7 @@ function connectWS() {
       case 'clip-added':
         if (msg.boardId === currentBoardId && !clips.find(c => c.id === msg.clip.id)) {
           clips.unshift(msg.clip);
+          clipStateVersion++;
           insertClipAnimated(msg.clip);
         }
         if (msg.boardId !== currentBoardId) {
@@ -450,6 +502,7 @@ function connectWS() {
         if (msg.boardId === currentBoardId) {
           const clipEl = document.querySelector(`.clip[data-id="${msg.clipId}"]`);
           clips = clips.filter(c => c.id !== msg.clipId);
+          clipStateVersion++;
           if (clipEl) {
             animateClipOut(clipEl, () => {
               renderedClipIds.delete(msg.clipId);
@@ -1149,7 +1202,7 @@ initTheme();
 $('#theme-toggle').addEventListener('click', toggleTheme);
 updateStaticTexts();
 connectWS();
-loadBoards().then(() => loadClips());
+syncFromServer();
 
 if ('Notification' in window && Notification.permission === 'default') {
   Notification.requestPermission();
@@ -1159,8 +1212,11 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     hiddenClipCount = 0;
     updateTitle();
+    syncAfterResume();
   }
 });
+
+window.addEventListener('focus', syncAfterResume);
 
 // Refresh time labels every 30s
 setInterval(() => {
