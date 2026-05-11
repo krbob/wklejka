@@ -46,7 +46,7 @@ docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest
 
 ## UI language
 
-Language is detected automatically from `navigator.language`. You can override it with a URL parameter:
+Language is detected automatically from the browser language list (`navigator.languages`, falling back to `navigator.language`). You can override it with a URL parameter:
 
 - `http://localhost:3000?lang=pl` – Polish
 - `http://localhost:3000?lang=en` – English

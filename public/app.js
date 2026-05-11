@@ -24,19 +24,19 @@ const i18n = {
     delete: 'Usu\u0144',
     copied: 'Skopiowano!',
     copyFailed: 'Nie uda\u0142o si\u0119 skopiowa\u0107',
-    sendError: 'B\u0142\u0105d wysy\u0142ania: ',
+    sendError: 'B\u0142\u0105d wysy\u0142ania: {message}',
     deleteError: 'B\u0142\u0105d usuwania',
     justNow: 'przed chwil\u0105',
-    minAgo: ' min temu',
-    hrsAgo: ' godz. temu',
-    daysAgo: ' dn. temu',
+    minutesAgo: '{count} min temu',
+    hoursAgo: '{count} godz. temu',
+    daysAgo: '{count} dn. temu',
     connected: 'Po\u0142\u0105czono',
     reconnecting: 'Roz\u0142\u0105czono \u2013 ponawiam...',
     file: 'Plik',
     attachFile: 'Za\u0142\u0105cz plik',
     uploading: 'Przesy\u0142anie...',
     payloadTooLarge: 'Plik jest za du\u017cy',
-    payloadTooLargeWithLimit: 'Plik jest za du\u017cy (maks. %s)',
+    payloadTooLargeWithLimit: 'Plik jest za du\u017cy (maks. {maxSize})',
     pastedImage: 'Wklejony obrazek',
     dropHereFiles: 'Upu\u015b\u0107 pliki tutaj',
     newTabTitle: 'Nowa karta',
@@ -49,16 +49,23 @@ const i18n = {
     expires30d: '30 dniach',
     create: 'Utw\u00f3rz',
     cancel: 'Anuluj',
-    expiresIn: 'Wygasa ',
-    notificationNewClip: 'Nowy wpis w %s',
+    expiresIn: 'Wygasa {time}',
+    notificationNewClip: 'Nowy wpis w {boardName}',
     showMore: 'Rozwiń',
     showLess: 'Zwiń',
     sure: 'Na pewno?',
     lock: 'Zablokuj',
     unlock: 'Odblokuj',
     unlockTitle: 'Odblokuj kart\u0119',
-    unlockPrompt: 'Wpisz "%s" aby odblokowa\u0107:',
+    unlockPrompt: 'Wpisz "{name}" aby odblokowa\u0107:',
     boardLocked: 'Karta jest zablokowana',
+    themeAuto: 'Auto',
+    themeDark: 'Ciemny',
+    themeLight: 'Jasny',
+    themeToggleLabel: 'Zmie\u0144 motyw',
+    expiryMinutes: '{count} min',
+    expiryHours: '{count} godz.',
+    expiryDays: '{count} dn.',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -79,19 +86,19 @@ const i18n = {
     delete: 'Delete',
     copied: 'Copied!',
     copyFailed: 'Failed to copy',
-    sendError: 'Send error: ',
+    sendError: 'Send error: {message}',
     deleteError: 'Delete error',
     justNow: 'just now',
-    minAgo: ' min ago',
-    hrsAgo: ' hrs ago',
-    daysAgo: ' days ago',
+    minutesAgo: '{count} min ago',
+    hoursAgo: '{count} hrs ago',
+    daysAgo: '{count} days ago',
     connected: 'Connected',
     reconnecting: 'Disconnected \u2013 reconnecting...',
     file: 'File',
     attachFile: 'Attach file',
     uploading: 'Uploading...',
     payloadTooLarge: 'File is too large',
-    payloadTooLargeWithLimit: 'File is too large (max %s)',
+    payloadTooLargeWithLimit: 'File is too large (max {maxSize})',
     pastedImage: 'Pasted image',
     dropHereFiles: 'Drop files here',
     newTabTitle: 'New tab',
@@ -104,24 +111,57 @@ const i18n = {
     expires30d: '30 days',
     create: 'Create',
     cancel: 'Cancel',
-    expiresIn: 'Expires ',
-    notificationNewClip: 'New clip in %s',
+    expiresIn: 'Expires {time}',
+    notificationNewClip: 'New clip in {boardName}',
     showMore: 'Show more',
     showLess: 'Show less',
     sure: 'Sure?',
     lock: 'Lock',
     unlock: 'Unlock',
     unlockTitle: 'Unlock tab',
-    unlockPrompt: 'Type "%s" to unlock:',
+    unlockPrompt: 'Type "{name}" to unlock:',
     boardLocked: 'Board is locked',
+    themeAuto: 'Auto',
+    themeDark: 'Dark',
+    themeLight: 'Light',
+    themeToggleLabel: 'Toggle theme',
+    expiryMinutes: '{count} min',
+    expiryHours: '{count}h',
+    expiryDays: '{count}d',
   }
 };
 
-const lang = new URLSearchParams(location.search).get('lang')
-  || (navigator.language.startsWith('pl') ? 'pl' : 'en');
+const supportedLanguages = Object.keys(i18n);
+const lang = detectLanguage();
+document.documentElement.lang = lang;
 
-function t(key) {
-  return (i18n[lang] || i18n.en)[key] || key;
+function detectLanguage() {
+  const requestedLanguage = normalizeLanguage(new URLSearchParams(location.search).get('lang'));
+  if (requestedLanguage) return requestedLanguage;
+
+  const browserLanguages = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const browserLanguage of browserLanguages) {
+    const normalizedLanguage = normalizeLanguage(browserLanguage);
+    if (normalizedLanguage) return normalizedLanguage;
+  }
+
+  return 'en';
+}
+
+function normalizeLanguage(value) {
+  if (!value) return null;
+  const normalized = value.toLowerCase();
+  const base = normalized.split('-')[0];
+  if (supportedLanguages.includes(normalized)) return normalized;
+  if (supportedLanguages.includes(base)) return base;
+  return null;
+}
+
+function t(key, params = {}) {
+  const template = (i18n[lang] || i18n.en)[key] || key;
+  return Object.entries(params).reduce((text, [name, value]) => {
+    return text.replaceAll(`{${name}}`, value == null ? '' : String(value));
+  }, template);
 }
 
 function updateStaticTexts() {
@@ -182,8 +222,9 @@ function toggleTheme() {
 function updateThemeToggle() {
   const btn = $('#theme-toggle');
   if (!btn) return;
-  const labels = { auto: 'Auto', dark: lang === 'pl' ? 'Ciemny' : 'Dark', light: lang === 'pl' ? 'Jasny' : 'Light' };
+  const labels = { auto: t('themeAuto'), dark: t('themeDark'), light: t('themeLight') };
   btn.textContent = labels[themeMode];
+  btn.setAttribute('aria-label', t('themeToggleLabel'));
 }
 
 // --- State ---
@@ -227,9 +268,7 @@ async function api(method, path, body) {
     } catch {}
     if (res.status === 413) {
       const maxSize = message.match(/\(max ([^)]+)\)/i)?.[1];
-      message = maxSize
-        ? t('payloadTooLargeWithLimit').replace('%s', maxSize)
-        : t('payloadTooLarge');
+      message = maxSize ? t('payloadTooLargeWithLimit', { maxSize }) : t('payloadTooLarge');
     }
     if (!message) message = res.statusText || `HTTP ${res.status}`;
     throw new Error(message);
@@ -309,7 +348,7 @@ async function sendClip(type, content, originalName) {
     }
   } catch (e) {
     removeGhost(ghostId);
-    showToast(t('sendError') + e.message);
+    showToast(t('sendError', { message: e.message }));
   }
 }
 
@@ -483,7 +522,7 @@ function connectWS() {
         if (document.hidden && Notification.permission === 'granted') {
           const board = boards.find(b => b.id === msg.boardId);
           const boardName = board ? (board.id === 'default' ? t('defaultBoard') : board.name) : '';
-          const body = t('notificationNewClip').replace('%s', boardName);
+          const body = t('notificationNewClip', { boardName });
           const n = new Notification('Wklejka', { body, tag: 'wklejka-' + msg.boardId });
           n.onclick = () => {
             window.focus();
@@ -706,16 +745,16 @@ function renderTabs() {
 }
 
 function expiryLabel(ms) {
-  if (ms < 3600000) return Math.round(ms / 60000) + ' min';
-  if (ms < 86400000) return Math.round(ms / 3600000) + (lang === 'pl' ? ' godz.' : 'h');
-  return Math.round(ms / 86400000) + (lang === 'pl' ? ' dn.' : 'd');
+  if (ms < 3600000) return t('expiryMinutes', { count: Math.round(ms / 60000) });
+  if (ms < 86400000) return t('expiryHours', { count: Math.round(ms / 3600000) });
+  return t('expiryDays', { count: Math.round(ms / 86400000) });
 }
 
 function boardTooltip(board) {
   if (!board.expiresAt) return '';
   const remaining = board.expiresAt - Date.now();
-  if (remaining <= 0) return t('expiresIn') + t('justNow');
-  return t('expiresIn') + expiryLabel(remaining);
+  if (remaining <= 0) return t('expiresIn', { time: t('justNow') });
+  return t('expiresIn', { time: expiryLabel(remaining) });
 }
 
 function createClipElement(clip) {
@@ -756,7 +795,7 @@ function createClipElement(clip) {
     fileInfo.appendChild(icon);
     const nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
-    nameSpan.textContent = clip.originalName || 'file';
+    nameSpan.textContent = clip.originalName || t('file');
     const sizeSpan = document.createElement('span');
     sizeSpan.className = 'file-size';
     sizeSpan.textContent = formatSize(clip.size);
@@ -1090,11 +1129,11 @@ function timeAgo(ts) {
   const sec = Math.floor((Date.now() - ts) / 1000);
   if (sec < 60) return t('justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return min + t('minAgo');
+  if (min < 60) return t('minutesAgo', { count: min });
   const hrs = Math.floor(min / 60);
-  if (hrs < 24) return hrs + t('hrsAgo');
+  if (hrs < 24) return t('hoursAgo', { count: hrs });
   const days = Math.floor(hrs / 24);
-  return days + t('daysAgo');
+  return t('daysAgo', { count: days });
 }
 
 function updateTitle() {
@@ -1157,7 +1196,7 @@ let unlockBoardId = null;
 function openUnlockModal(board) {
   unlockBoardId = board.id;
   $('#unlock-title').textContent = t('unlockTitle');
-  $('#unlock-prompt').textContent = t('unlockPrompt').replace('%s', board.name);
+  $('#unlock-prompt').textContent = t('unlockPrompt', { name: board.name });
   $('#unlock-input').value = '';
   $('#unlock-input').dataset.expected = board.name;
   $('#unlock-confirm').disabled = true;
