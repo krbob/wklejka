@@ -1,6 +1,11 @@
 /* Wklejka - frontend */
 
 const $ = (s) => document.querySelector(s);
+const highlight = window.WklejkaHighlight || {
+  highlightedTextWithLinks(text) {
+    return { html: escapeHtml(text), asCode: false };
+  },
+};
 
 // --- i18n ---
 
@@ -902,60 +907,6 @@ function visibleClips() {
   return clips.filter(clip => clipMatchesSearch(clip, searchQuery));
 }
 
-function looksLikeCode(text) {
-  const lines = text.split('\n');
-  return /```|<\/?[a-z][\s\S]*>|[{};]/i.test(text)
-    || /\b(function|const|let|var|return|class|import|export|async|await|def|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE)\b/.test(text)
-    || lines.filter(line => /^\s{2,}\S/.test(line)).length >= 2;
-}
-
-function highlightTokenClass(token) {
-  if (/^(\/\/|\/\*|#)/.test(token)) return 'tok-comment';
-  if (/^["'`]/.test(token)) return 'tok-string';
-  if (/^\d/.test(token)) return 'tok-number';
-  return 'tok-keyword';
-}
-
-function highlightPlainSegment(segment, asCode) {
-  if (!asCode) return escapeHtml(segment);
-
-  const keywords = [
-    'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'def', 'default',
-    'delete', 'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if',
-    'import', 'in', 'let', 'new', 'null', 'return', 'select', 'throw', 'true', 'try', 'undefined',
-    'var', 'while', 'where', 'insert', 'update', 'create', 'drop', 'join', 'from',
-  ].join('|');
-  const tokenRe = new RegExp(`(\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*|#[^\\n]*|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\\\`(?:\\\\.|[^\\\`\\\\])*\\\`|\\b(?:${keywords})\\b|\\b\\d+(?:\\.\\d+)?\\b)`, 'gi');
-
-  let output = '';
-  let lastIndex = 0;
-  let match;
-  while ((match = tokenRe.exec(segment)) !== null) {
-    output += escapeHtml(segment.slice(lastIndex, match.index));
-    const token = match[0];
-    output += `<span class="${highlightTokenClass(token)}">${escapeHtml(token)}</span>`;
-    lastIndex = tokenRe.lastIndex;
-  }
-  output += escapeHtml(segment.slice(lastIndex));
-  return output;
-}
-
-function highlightedTextWithLinks(text) {
-  const asCode = looksLikeCode(text);
-  const urlRe = /https?:\/\/[^\s<]+/g;
-  let output = '';
-  let lastIndex = 0;
-  let match;
-  while ((match = urlRe.exec(text)) !== null) {
-    output += highlightPlainSegment(text.slice(lastIndex, match.index), asCode);
-    const url = match[0];
-    output += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`;
-    lastIndex = urlRe.lastIndex;
-  }
-  output += highlightPlainSegment(text.slice(lastIndex), asCode);
-  return { html: output, asCode };
-}
-
 function clipLink(boardId, clipId) {
   const params = new URLSearchParams(location.search);
   const langParam = params.get('lang');
@@ -1076,7 +1027,7 @@ function createClipElement(clip) {
     }
   } else {
     const pre = document.createElement('pre');
-    const highlighted = highlightedTextWithLinks(clip.content);
+    const highlighted = highlight.highlightedTextWithLinks(clip.content);
     pre.innerHTML = highlighted.html;
     if (highlighted.asCode) pre.classList.add('syntax-highlight');
     content.appendChild(pre);

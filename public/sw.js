@@ -1,6 +1,7 @@
-const CACHE_NAME = 'wklejka-v3';
+const CACHE_NAME = 'wklejka-v4';
 const SHELL_ASSETS = [
   '/',
+  '/highlight.js',
   '/style.css',
   '/app.js',
   '/manifest.json',
