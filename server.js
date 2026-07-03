@@ -11,6 +11,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const FILES_DIR = path.join(DATA_DIR, 'files');
 const STORE_FILE = path.join(DATA_DIR, 'store.json');
+const STORE_BACKUP_FILE = path.join(DATA_DIR, 'store.json.bak');
 const SAFE_IMAGE_MIME_TYPES = new Map([
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
@@ -216,32 +217,160 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
 // --- Store ---
 
 let store = { boards: [], clips: {} };
+let saveTimeout = null;
+let storeDirty = false;
 
-function loadStore() {
-  try {
-    if (fs.existsSync(STORE_FILE)) {
-      store = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-    }
-  } catch (e) {
-    console.error('Failed to load store:', e.message);
+function createDefaultStore() {
+  return {
+    boards: [{ id: 'default', name: 'Schowek', createdAt: Date.now() }],
+    clips: { default: [] },
+  };
+}
+
+function normalizeStore(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Store root must be an object');
   }
-  if (!store.boards || !store.boards.length) {
-    store.boards = [{ id: 'default', name: 'Schowek', createdAt: Date.now() }];
-    store.clips = { default: [] };
-    saveStore();
+
+  const boards = Array.isArray(candidate.boards) ? candidate.boards : [];
+  const clips = candidate.clips && typeof candidate.clips === 'object' && !Array.isArray(candidate.clips)
+    ? candidate.clips
+    : {};
+
+  for (const board of boards) {
+    if (board && typeof board.id === 'string' && !Array.isArray(clips[board.id])) {
+      clips[board.id] = [];
+    }
+  }
+
+  return { ...candidate, boards, clips };
+}
+
+function timestampForFilename() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+function backupCorruptStore() {
+  if (!fs.existsSync(STORE_FILE)) return null;
+
+  const backupFile = path.join(DATA_DIR, `store.json.corrupt-${timestampForFilename()}`);
+  try {
+    fs.renameSync(STORE_FILE, backupFile);
+    return backupFile;
+  } catch (error) {
+    console.error('Failed to preserve corrupt store:', error.message);
+    return null;
   }
 }
 
-let saveTimeout;
+function readStoreFile(file) {
+  return normalizeStore(JSON.parse(fs.readFileSync(file, 'utf8')));
+}
+
+function fsyncDirectory(dir) {
+  let fd;
+  try {
+    fd = fs.openSync(dir, 'r');
+    fs.fsyncSync(fd);
+  } catch {
+    // Directory fsync is best-effort and can fail on some filesystems.
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
+function writeFileAtomic(file, data) {
+  const tmpFile = path.join(DATA_DIR, `.store-${process.pid}-${Date.now()}.tmp`);
+  let fd;
+
+  try {
+    fd = fs.openSync(tmpFile, 'w', 0o600);
+    fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+
+    if (fs.existsSync(file)) {
+      fs.copyFileSync(file, STORE_BACKUP_FILE);
+    }
+    fs.renameSync(tmpFile, file);
+    fsyncDirectory(DATA_DIR);
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    try { fs.unlinkSync(tmpFile); } catch {}
+    throw error;
+  }
+}
+
+function loadStore() {
+  if (fs.existsSync(STORE_FILE)) {
+    try {
+      store = readStoreFile(STORE_FILE);
+    } catch (e) {
+      console.error('Failed to load store:', e.message);
+      const corruptBackup = backupCorruptStore();
+      if (corruptBackup) {
+        console.error(`Corrupt store preserved as ${corruptBackup}`);
+      }
+
+      if (fs.existsSync(STORE_BACKUP_FILE)) {
+        try {
+          store = readStoreFile(STORE_BACKUP_FILE);
+          console.error(`Recovered store from ${STORE_BACKUP_FILE}`);
+          storeDirty = true;
+          saveStoreNow(true);
+        } catch (backupError) {
+          console.error('Failed to load store backup:', backupError.message);
+        }
+      }
+    }
+  }
+
+  if (!store.boards || !store.boards.length) {
+    store = createDefaultStore();
+    storeDirty = true;
+    saveStoreNow(true);
+  }
+}
+
+function saveStoreNow(force = false) {
+  clearTimeout(saveTimeout);
+  saveTimeout = null;
+
+  if (!force && !storeDirty) return;
+
+  try {
+    writeFileAtomic(STORE_FILE, JSON.stringify(store, null, 2));
+    storeDirty = false;
+  } catch (e) {
+    storeDirty = true;
+    throw e;
+  }
+}
+
 function saveStore() {
+  storeDirty = true;
   clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => {
     try {
-      fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2));
+      saveStoreNow();
     } catch (e) {
       console.error('Failed to save store:', e.message);
     }
   }, 200);
+}
+
+function flushStore() {
+  if (!storeDirty) return;
+  try {
+    saveStoreNow();
+  } catch (e) {
+    console.error('Failed to flush store:', e.message);
+  }
 }
 
 loadStore();
@@ -573,3 +702,14 @@ cleanOrphanFiles();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wklejka running at http://0.0.0.0:${PORT}`);
 });
+
+function shutdown(signal) {
+  console.log(`Received ${signal}, flushing store before shutdown`);
+  flushStore();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('beforeExit', flushStore);
