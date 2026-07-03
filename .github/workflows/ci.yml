@@ -26,6 +26,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Lint Dockerfile
+        run: docker run --rm -i hadolint/hadolint:latest < Dockerfile
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -37,6 +40,19 @@ jobs:
           tags: wklejka:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan Docker image
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --exit-code 1 \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --quiet \
+            --no-progress \
+            wklejka:test
 
       - name: Run container
         run: docker run -d --name app -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" wklejka:test
