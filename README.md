@@ -4,7 +4,10 @@
 
 Lightweight, browser-based shared clipboard. Paste text, images or files on one computer and instantly pick them up on another. Real-time sync via WebSocket, no sign-up required.
 
-![screenshot](screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshot-dark.png">
+  <img src="screenshot.png" alt="screenshot">
+</picture>
 
 ## Getting started
 
