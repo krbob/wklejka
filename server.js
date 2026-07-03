@@ -747,6 +747,28 @@ app.post('/api/boards/:id/clips', (req, res) => {
   res.json(clip);
 });
 
+app.put('/api/boards/:boardId/clips/:clipId', (req, res) => {
+  const { boardId, clipId } = req.params;
+  const boardClips = store.clips[boardId];
+  if (!boardClips) return res.status(404).json({ error: 'Board not found' });
+  const lockedBoard = store.boards.find(b => b.id === boardId);
+  if (lockedBoard && lockedBoard.locked) return res.status(403).json({ error: 'Board is locked' });
+
+  const clip = boardClips.find(c => c.id === clipId);
+  if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  if (clip.type !== 'text') return res.status(400).json({ error: 'Only text clips can be edited' });
+
+  const content = String(req.body.content ?? '');
+  if (!content.trim()) return res.status(400).json({ error: 'Content required' });
+  assertWithinTextLimit(content);
+
+  clip.content = content;
+  clip.updatedAt = Date.now();
+  saveStore();
+  broadcast({ type: 'clip-updated', boardId, clip });
+  res.json(clip);
+});
+
 app.delete('/api/boards/:boardId/clips/:clipId', (req, res) => {
   const { boardId, clipId } = req.params;
   if (!store.clips[boardId]) return res.status(404).json({ error: 'Board not found' });

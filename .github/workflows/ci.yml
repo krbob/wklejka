@@ -73,11 +73,17 @@ jobs:
           set -euo pipefail
           base="http://localhost:${{ env.APP_PORT }}"
 
-          curl -fsS -X POST "${base}/api/boards/default/clips" \
+          TEXT_CLIP=$(curl -fsS -X POST "${base}/api/boards/default/clips" \
             -H 'Content-Type: application/json' \
-            -d '{"type":"text","content":"ci test"}' | grep -q '"type":"text"'
+            -d '{"type":"text","content":"ci test"}')
+          echo "$TEXT_CLIP" | grep -q '"type":"text"'
 
           curl -fsS "${base}/api/boards/default/clips" | grep -q '"ci test"'
+          TEXT_ID=$(echo "$TEXT_CLIP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+          curl -fsS -X PUT "${base}/api/boards/default/clips/${TEXT_ID}" \
+            -H 'Content-Type: application/json' \
+            -d '{"content":"ci edited"}' | grep -q '"updatedAt"'
+          curl -fsS "${base}/api/boards/default/clips" | grep -q '"ci edited"'
 
           # File upload
           curl -fsS -X POST "${base}/api/boards/default/clips" \

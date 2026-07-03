@@ -43,6 +43,9 @@ If you prefer a bind mount such as `./data:/app/data`, make sure the directory i
 - **Tabs** – separate virtual documents (e.g. "Work", "Home") with optional auto-expiry (1 h, 24 h, 7 d, 30 d). Drag to reorder, double-click to rename.
 - **Tab locking** – lock a tab to prevent accidental deletion of the tab or its clips. Unlocking requires typing the tab name (like deleting a GitHub repo).
 - **Copy / Download / Delete** – on every entry. Delete requires inline confirmation.
+- **Search, edit & direct links** – filter clips in the current tab, edit text clips, and copy a direct link to any clip.
+- **Syntax highlighting** – code-like text clips get lightweight inline highlighting.
+- **Upload progress** – large files show read/upload progress instead of a plain spinner.
 - **Link previews** – URLs in text clips automatically show a preview card with title, description, and image.
 - **Dark mode** – auto-detects system preference, manual toggle in header. Persisted across sessions.
 - **Persistent storage** – data lives in `/app/data` (a Docker volume by default) and survives container restarts.

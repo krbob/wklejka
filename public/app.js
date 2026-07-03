@@ -66,6 +66,13 @@ const i18n = {
     expiryMinutes: '{count} min',
     expiryHours: '{count} godz.',
     expiryDays: '{count} dn.',
+    searchPlaceholder: 'Szukaj wpisów',
+    noSearchResults: 'Brak wyników.',
+    edit: 'Edytuj',
+    save: 'Zapisz',
+    link: 'Link',
+    linkCopied: 'Skopiowano link',
+    editError: 'Błąd edycji',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -128,6 +135,13 @@ const i18n = {
     expiryMinutes: '{count} min',
     expiryHours: '{count}h',
     expiryDays: '{count}d',
+    searchPlaceholder: 'Search clips',
+    noSearchResults: 'No matches.',
+    edit: 'Edit',
+    save: 'Save',
+    link: 'Link',
+    linkCopied: 'Link copied',
+    editError: 'Edit failed',
   }
 };
 
@@ -171,6 +185,7 @@ function updateStaticTexts() {
   $('#send-btn').textContent = t('send');
   $('.drop-overlay-content p').textContent = t('dropHereFiles');
   $('#file-btn').textContent = t('attachFile');
+  $('#search-input').placeholder = t('searchPlaceholder');
   // Modal texts
   $('#modal-title').textContent = t('newTabTitle');
   $('#modal-name-label').textContent = t('boardNameLabel');
@@ -245,8 +260,19 @@ let isDraggingTab = false;
 let renderedClipIds = new Set();
 let renderedBoardIds = new Set();
 const linkPreviewCache = new Map();
+let searchQuery = '';
+let focusedClipHash = '';
 
 // --- API helpers ---
+
+function normalizeApiErrorMessage(status, statusText, message) {
+  let nextMessage = message || '';
+  if (status === 413) {
+    const maxSize = nextMessage.match(/\(max ([^)]+)\)/i)?.[1];
+    nextMessage = maxSize ? t('payloadTooLargeWithLimit', { maxSize }) : t('payloadTooLarge');
+  }
+  return nextMessage || statusText || `HTTP ${status}`;
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: {} };
@@ -266,14 +292,44 @@ async function api(method, path, body) {
         message = (await res.text()).trim();
       }
     } catch {}
-    if (res.status === 413) {
-      const maxSize = message.match(/\(max ([^)]+)\)/i)?.[1];
-      message = maxSize ? t('payloadTooLargeWithLimit', { maxSize }) : t('payloadTooLarge');
-    }
-    if (!message) message = res.statusText || `HTTP ${res.status}`;
-    throw new Error(message);
+    throw new Error(normalizeApiErrorMessage(res.status, res.statusText, message));
   }
   return res.json();
+}
+
+function apiWithProgress(method, path, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, '/api' + path);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader('content-type') || '';
+      let parsed = null;
+      if (contentType.includes('application/json') && xhr.responseText) {
+        try { parsed = JSON.parse(xhr.responseText); } catch {}
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(parsed);
+        return;
+      }
+      const message = parsed?.error || parsed?.message || xhr.responseText.trim();
+      reject(new Error(normalizeApiErrorMessage(xhr.status, xhr.statusText, message)));
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.onabort = () => reject(new Error('Request aborted'));
+    xhr.send(JSON.stringify(body));
+  });
+}
+
+function stripTokenFromUrl() {
+  const params = new URLSearchParams(location.search);
+  if (!params.has('token')) return;
+  params.delete('token');
+  const query = params.toString();
+  history.replaceState(null, '', location.pathname + (query ? `?${query}` : '') + location.hash);
 }
 
 // --- Data operations ---
@@ -284,6 +340,10 @@ async function loadBoards() {
   Object.keys(unreadCounts).forEach((id) => {
     if (!boardIds.has(id)) delete unreadCounts[id];
   });
+  const target = clipTargetFromHash();
+  if (target && boardIds.has(target.boardId)) {
+    currentBoardId = target.boardId;
+  }
   if (boards.length && !boards.some(b => b.id === currentBoardId)) {
     currentBoardId = boards[0].id;
   }
@@ -300,6 +360,7 @@ async function loadClips(boardId = currentBoardId) {
   clips = nextClips;
   renderedClipIds.clear();
   renderClips();
+  focusClipFromHash();
 }
 
 async function syncFromServer() {
@@ -331,20 +392,31 @@ function syncAfterResume() {
   syncFromServer();
 }
 
-async function sendClip(type, content, originalName) {
-  const ghostId = 'ghost-' + Date.now() + Math.random().toString(36).substr(2, 5);
-  if (type !== 'text') {
+async function sendClip(type, content, originalName, options = {}) {
+  const ghostId = options.ghostId || ('ghost-' + Date.now() + Math.random().toString(36).substr(2, 5));
+  const hasGhost = type !== 'text';
+  if (hasGhost && !options.ghostId) {
     showGhost(ghostId, originalName || (type === 'image' ? t('image') : t('file')));
   }
   try {
     const body = { type, content };
     if (originalName) body.originalName = originalName;
-    const clip = await api('POST', '/boards/' + currentBoardId + '/clips', body);
+    const clip = hasGhost
+      ? await apiWithProgress('POST', '/boards/' + currentBoardId + '/clips', body, (progress) => {
+        const base = options.baseProgress || 0;
+        const span = 100 - base;
+        updateGhostProgress(ghostId, base + progress * span);
+      })
+      : await api('POST', '/boards/' + currentBoardId + '/clips', body);
     removeGhost(ghostId);
     if (!clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
       clipStateVersion++;
-      insertClipAnimated(clip);
+      if (searchQuery && !clipMatchesSearch(clip, searchQuery)) {
+        renderClips();
+      } else {
+        insertClipAnimated(clip);
+      }
     }
   } catch (e) {
     removeGhost(ghostId);
@@ -370,12 +442,50 @@ function showGhost(ghostId, label) {
   body.className = 'clip-content uploading-label';
   body.textContent = t('uploading');
   el.appendChild(body);
+  const progress = document.createElement('div');
+  progress.className = 'upload-progress';
+  progress.setAttribute('role', 'progressbar');
+  progress.setAttribute('aria-valuemin', '0');
+  progress.setAttribute('aria-valuemax', '100');
+  const bar = document.createElement('div');
+  bar.className = 'upload-progress-bar';
+  progress.appendChild(bar);
+  el.appendChild(progress);
   container.appendChild(el);
+  updateGhostProgress(ghostId, 0);
 }
 
 function removeGhost(ghostId) {
   const el = document.getElementById(ghostId);
   if (el) el.remove();
+}
+
+function updateGhostProgress(ghostId, percent) {
+  const el = document.getElementById(ghostId);
+  if (!el) return;
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  const bar = el.querySelector('.upload-progress-bar');
+  const progress = el.querySelector('.upload-progress');
+  const label = el.querySelector('.uploading-label');
+  if (bar) bar.style.width = clamped + '%';
+  if (progress) progress.setAttribute('aria-valuenow', String(clamped));
+  if (label) label.textContent = `${t('uploading')} ${clamped}%`;
+}
+
+function uploadBlob(blob, type, originalName) {
+  const ghostId = 'ghost-' + Date.now() + Math.random().toString(36).substr(2, 5);
+  showGhost(ghostId, originalName || (type === 'image' ? t('image') : t('file')));
+
+  const reader = new FileReader();
+  reader.onprogress = (event) => {
+    if (event.lengthComputable) updateGhostProgress(ghostId, (event.loaded / event.total) * 35);
+  };
+  reader.onload = () => sendClip(type, reader.result, originalName, { ghostId, baseProgress: 35 });
+  reader.onerror = () => {
+    removeGhost(ghostId);
+    showToast(t('sendError', { message: reader.error?.message || 'Read failed' }));
+  };
+  reader.readAsDataURL(blob);
 }
 
 function animateClipOut(el, callback) {
@@ -553,6 +663,17 @@ function connectWS() {
           }
         }
         break;
+      case 'clip-updated':
+        if (msg.boardId === currentBoardId) {
+          const idx = clips.findIndex(c => c.id === msg.clip.id);
+          if (idx !== -1) {
+            clips[idx] = msg.clip;
+            clipStateVersion++;
+            renderClips();
+            focusClipFromHash();
+          }
+        }
+        break;
       case 'board-added':
         if (!boards.find(b => b.id === msg.board.id)) {
           boards.push(msg.board);
@@ -718,6 +839,9 @@ function renderTabs() {
     btn.addEventListener('click', () => {
       if (currentBoardId === board.id) return;
       currentBoardId = board.id;
+      if (location.hash.startsWith('#clip=')) {
+        history.replaceState(null, '', location.pathname + location.search);
+      }
       unreadCounts[board.id] = 0;
       updateTitle();
       renderTabs();
@@ -755,6 +879,134 @@ function boardTooltip(board) {
   const remaining = board.expiresAt - Date.now();
   if (remaining <= 0) return t('expiresIn', { time: t('justNow') });
   return t('expiresIn', { time: expiryLabel(remaining) });
+}
+
+function currentBoard() {
+  return boards.find(b => b.id === currentBoardId);
+}
+
+function clipMatchesSearch(clip, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  const haystack = [
+    clip.type,
+    clip.content,
+    clip.originalName,
+    clip.mimeType,
+    clip.size ? formatSize(clip.size) : '',
+  ].filter(Boolean).join('\n').toLowerCase();
+  return haystack.includes(normalized);
+}
+
+function visibleClips() {
+  return clips.filter(clip => clipMatchesSearch(clip, searchQuery));
+}
+
+function looksLikeCode(text) {
+  const lines = text.split('\n');
+  return /```|<\/?[a-z][\s\S]*>|[{};]/i.test(text)
+    || /\b(function|const|let|var|return|class|import|export|async|await|def|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE)\b/.test(text)
+    || lines.filter(line => /^\s{2,}\S/.test(line)).length >= 2;
+}
+
+function highlightTokenClass(token) {
+  if (/^(\/\/|\/\*|#)/.test(token)) return 'tok-comment';
+  if (/^["'`]/.test(token)) return 'tok-string';
+  if (/^\d/.test(token)) return 'tok-number';
+  return 'tok-keyword';
+}
+
+function highlightPlainSegment(segment, asCode) {
+  if (!asCode) return escapeHtml(segment);
+
+  const keywords = [
+    'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'def', 'default',
+    'delete', 'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if',
+    'import', 'in', 'let', 'new', 'null', 'return', 'select', 'throw', 'true', 'try', 'undefined',
+    'var', 'while', 'where', 'insert', 'update', 'create', 'drop', 'join', 'from',
+  ].join('|');
+  const tokenRe = new RegExp(`(\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*|#[^\\n]*|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\\\`(?:\\\\.|[^\\\`\\\\])*\\\`|\\b(?:${keywords})\\b|\\b\\d+(?:\\.\\d+)?\\b)`, 'gi');
+
+  let output = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = tokenRe.exec(segment)) !== null) {
+    output += escapeHtml(segment.slice(lastIndex, match.index));
+    const token = match[0];
+    output += `<span class="${highlightTokenClass(token)}">${escapeHtml(token)}</span>`;
+    lastIndex = tokenRe.lastIndex;
+  }
+  output += escapeHtml(segment.slice(lastIndex));
+  return output;
+}
+
+function highlightedTextWithLinks(text) {
+  const asCode = looksLikeCode(text);
+  const urlRe = /https?:\/\/[^\s<]+/g;
+  let output = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = urlRe.exec(text)) !== null) {
+    output += highlightPlainSegment(text.slice(lastIndex, match.index), asCode);
+    const url = match[0];
+    output += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`;
+    lastIndex = urlRe.lastIndex;
+  }
+  output += highlightPlainSegment(text.slice(lastIndex), asCode);
+  return { html: output, asCode };
+}
+
+function clipLink(boardId, clipId) {
+  const params = new URLSearchParams(location.search);
+  const langParam = params.get('lang');
+  const query = langParam ? `?lang=${encodeURIComponent(langParam)}` : '';
+  return `${location.origin}${location.pathname}${query}#clip=${encodeURIComponent(boardId)}:${encodeURIComponent(clipId)}`;
+}
+
+function clipTargetFromHash() {
+  const match = location.hash.match(/^#clip=([^:]+):(.+)$/);
+  if (!match) return null;
+  try {
+    return {
+      boardId: decodeURIComponent(match[1]),
+      clipId: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function focusClipElement(clipId) {
+  const el = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
+  if (!el) return false;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('clip-focused');
+  setTimeout(() => el.classList.remove('clip-focused'), 1600);
+  return true;
+}
+
+function focusClipFromHash() {
+  const target = clipTargetFromHash();
+  if (!target) return;
+  if (location.hash === focusedClipHash) return;
+  if (target.boardId !== currentBoardId) {
+    if (boards.some(board => board.id === target.boardId)) {
+      currentBoardId = target.boardId;
+      unreadCounts[target.boardId] = 0;
+      updateTitle();
+      renderTabs();
+      loadClips();
+    }
+    return;
+  }
+  if (searchQuery) {
+    searchQuery = '';
+    $('#search-input').value = '';
+    renderClips();
+  }
+  requestAnimationFrame(() => {
+    if (focusClipElement(target.clipId)) focusedClipHash = location.hash;
+  });
 }
 
 function createClipElement(clip) {
@@ -824,7 +1076,9 @@ function createClipElement(clip) {
     }
   } else {
     const pre = document.createElement('pre');
-    pre.innerHTML = linkify(clip.content);
+    const highlighted = highlightedTextWithLinks(clip.content);
+    pre.innerHTML = highlighted.html;
+    if (highlighted.asCode) pre.classList.add('syntax-highlight');
     content.appendChild(pre);
     requestAnimationFrame(() => {
       if (pre.scrollHeight > 400) {
@@ -857,12 +1111,21 @@ function createClipElement(clip) {
   // Actions
   const actions = document.createElement('div');
   actions.className = 'clip-actions';
+  const board = currentBoard();
+  const isLocked = !!board?.locked;
 
   if (clip.type !== 'file') {
     const copyBtn = document.createElement('button');
     copyBtn.textContent = t('copy');
     copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
     actions.appendChild(copyBtn);
+  }
+
+  if (clip.type === 'text' && !isLocked) {
+    const editBtn = document.createElement('button');
+    editBtn.textContent = t('edit');
+    editBtn.addEventListener('click', () => startEditClip(clip, el));
+    actions.appendChild(editBtn);
   }
 
   if (clip.type === 'image' || clip.type === 'file') {
@@ -872,8 +1135,12 @@ function createClipElement(clip) {
     actions.appendChild(dlBtn);
   }
 
-  const currentBoard = boards.find(b => b.id === currentBoardId);
-  if (!currentBoard || !currentBoard.locked) {
+  const linkBtn = document.createElement('button');
+  linkBtn.textContent = t('link');
+  linkBtn.addEventListener('click', () => copyClipLink(clip.id, linkBtn));
+  actions.appendChild(linkBtn);
+
+  if (!isLocked) {
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-delete';
     delBtn.textContent = t('delete');
@@ -902,6 +1169,7 @@ function createClipElement(clip) {
 
 function renderClips() {
   const container = $('#clips');
+  const nextClips = visibleClips();
 
   if (!clips.length) {
     renderedClipIds.clear();
@@ -909,11 +1177,17 @@ function renderClips() {
     return;
   }
 
+  if (!nextClips.length) {
+    renderedClipIds.clear();
+    container.innerHTML = '<div class="empty-state">' + escapeHtml(t('noSearchResults')) + '</div>';
+    return;
+  }
+
   container.innerHTML = '';
-  clips.forEach(clip => {
+  nextClips.forEach(clip => {
     container.appendChild(createClipElement(clip));
   });
-  renderedClipIds = new Set(clips.map(c => c.id));
+  renderedClipIds = new Set(nextClips.map(c => c.id));
 }
 
 function insertClipAnimated(clip) {
@@ -927,7 +1201,84 @@ function insertClipAnimated(clip) {
   renderedClipIds.add(clip.id);
 }
 
+function startEditClip(clip, el) {
+  const boardId = currentBoardId;
+  const content = el.querySelector('.clip-content');
+  if (!content) return;
+  content.innerHTML = '';
+  el.classList.add('editing');
+
+  const editor = document.createElement('textarea');
+  editor.className = 'clip-editor';
+  editor.value = clip.content;
+  content.appendChild(editor);
+
+  const editActions = document.createElement('div');
+  editActions.className = 'clip-edit-actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-secondary';
+  cancelBtn.textContent = t('cancel');
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = t('save');
+  editActions.appendChild(cancelBtn);
+  editActions.appendChild(saveBtn);
+  content.appendChild(editActions);
+
+  const finish = () => {
+    el.classList.remove('editing');
+    renderClips();
+    focusClipElement(clip.id);
+  };
+
+  cancelBtn.addEventListener('click', finish);
+  saveBtn.addEventListener('click', async () => {
+    const nextContent = editor.value;
+    if (!nextContent.trim()) return;
+    saveBtn.disabled = true;
+    try {
+      const updated = await api('PUT', '/boards/' + boardId + '/clips/' + clip.id, { content: nextContent });
+      const idx = clips.findIndex(c => c.id === updated.id);
+      if (idx !== -1) clips[idx] = updated;
+      clipStateVersion++;
+      finish();
+    } catch {
+      saveBtn.disabled = false;
+      showToast(t('editError'));
+    }
+  });
+  editor.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') finish();
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      saveBtn.click();
+    }
+  });
+  requestAnimationFrame(() => {
+    editor.focus();
+    editor.selectionStart = editor.selectionEnd = editor.value.length;
+  });
+}
+
 // --- Clip actions ---
+
+async function copyClipLink(clipId, btn) {
+  try {
+    await navigator.clipboard.writeText(clipLink(currentBoardId, clipId));
+    showToast(t('linkCopied'));
+    if (btn) {
+      clearTimeout(btn._linkTimeout);
+      btn.textContent = '\u2713';
+      btn.classList.add('copy-success');
+      btn._linkTimeout = setTimeout(() => {
+        btn.textContent = t('link');
+        btn.classList.remove('copy-success');
+      }, 1500);
+    }
+  } catch {
+    showToast(t('copyFailed'));
+  }
+}
 
 async function copyClip(clip, btn) {
   try {
@@ -985,9 +1336,7 @@ document.addEventListener('paste', (e) => {
   if (imageItem) {
     e.preventDefault();
     const blob = imageItem.getAsFile();
-    const reader = new FileReader();
-    reader.onload = () => sendClip('image', reader.result);
-    reader.readAsDataURL(blob);
+    uploadBlob(blob, 'image');
   }
   // Text paste in textarea: default behavior handles it
 });
@@ -1030,13 +1379,11 @@ document.addEventListener('drop', (e) => {
 
   const files = Array.from(e.dataTransfer.files);
   files.forEach(file => {
-    const reader = new FileReader();
     if (file.type.startsWith('image/')) {
-      reader.onload = () => sendClip('image', reader.result);
+      uploadBlob(file, 'image', file.name);
     } else {
-      reader.onload = () => sendClip('file', reader.result, file.name);
+      uploadBlob(file, 'file', file.name);
     }
-    reader.readAsDataURL(file);
   });
 });
 
@@ -1067,18 +1414,21 @@ $('#text-input').addEventListener('keydown', (e) => {
 
 $('#send-btn').addEventListener('click', sendText);
 
+$('#search-input').addEventListener('input', (event) => {
+  searchQuery = event.target.value.trim();
+  renderClips();
+});
+
 // File picker
 $('#file-btn').addEventListener('click', () => $('#file-input').click());
 $('#file-input').addEventListener('change', (e) => {
   const files = Array.from(e.target.files);
   files.forEach(file => {
-    const reader = new FileReader();
     if (file.type.startsWith('image/')) {
-      reader.onload = () => sendClip('image', reader.result);
+      uploadBlob(file, 'image', file.name);
     } else {
-      reader.onload = () => sendClip('file', reader.result, file.name);
+      uploadBlob(file, 'file', file.name);
     }
-    reader.readAsDataURL(file);
   });
   e.target.value = '';
 });
@@ -1095,11 +1445,6 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
-}
-
-function linkify(text) {
-  const escaped = escapeHtml(text);
-  return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
 
 function fileIcon(name) {
@@ -1237,6 +1582,7 @@ $('#unlock-input').addEventListener('keydown', (e) => {
 
 // --- Init ---
 
+stripTokenFromUrl();
 initTheme();
 $('#theme-toggle').addEventListener('click', toggleTheme);
 updateStaticTexts();
@@ -1256,6 +1602,10 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('focus', syncAfterResume);
+window.addEventListener('hashchange', () => {
+  focusedClipHash = '';
+  focusClipFromHash();
+});
 
 // Refresh time labels every 30s
 setInterval(() => {
