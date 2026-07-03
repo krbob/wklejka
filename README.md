@@ -58,6 +58,7 @@ If you prefer a bind mount such as `./data:/app/data`, make sure the directory i
 - `MAX_TEXT_CLIP_BYTES` – max text clip size, default `1048576` (1 MB).
 - `AUTH_USERNAME` and `AUTH_PASSWORD` – enable HTTP Basic Auth.
 - `AUTH_TOKEN` – enable token auth. Open `/?token=<token>` once to set an HttpOnly cookie.
+- `AUTH_RATE_LIMIT` – max failed authentication attempts per minute per client, default `20`.
 - `API_RATE_LIMIT` – max API requests per minute per client, default `600`.
 - `LINK_PREVIEW_RATE_LIMIT` – max link preview requests per minute per client, default `30`.
 

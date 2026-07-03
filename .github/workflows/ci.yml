@@ -52,6 +52,7 @@ jobs:
             --ignore-unfixed \
             --quiet \
             --no-progress \
+            --table-mode summary \
             wklejka:test
 
       - name: Run container
@@ -233,6 +234,37 @@ jobs:
           [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
 
           echo "Link preview tests passed"
+
+      - name: Smoke test auth rate limit
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+
+          docker rm -f app
+          docker run -d --name app \
+            -e AUTH_TOKEN=secret \
+            -e AUTH_RATE_LIMIT=2 \
+            -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" \
+            wklejka:test
+
+          for _attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 "${base}/healthz" > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/boards")
+          [ "$HTTP_CODE" = "401" ] || { echo "Expected 401, got $HTTP_CODE"; exit 1; }
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/boards")
+          [ "$HTTP_CODE" = "401" ] || { echo "Expected 401, got $HTTP_CODE"; exit 1; }
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "${base}/api/boards")
+          [ "$HTTP_CODE" = "429" ] || { echo "Expected 429, got $HTTP_CODE"; exit 1; }
+
+          curl -fsS -H 'Authorization: Bearer secret' "${base}/api/boards" | grep -q 'default'
+          echo "Auth rate limit test passed"
 
       - name: Clean up
         if: always()

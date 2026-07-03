@@ -70,6 +70,7 @@ const AUTH_PASSWORD = process.env.AUTH_PASSWORD || process.env.WKLEJKA_PASSWORD 
 const AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
 const AUTH_COOKIE = 'wklejka_token';
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const AUTH_RATE_LIMIT = readPositiveInt(process.env.AUTH_RATE_LIMIT, 20);
 const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
 const LINK_PREVIEW_RATE_LIMIT = readPositiveInt(process.env.LINK_PREVIEW_RATE_LIMIT, 30);
 
@@ -241,13 +242,67 @@ function authResult(req) {
   return { ok: false };
 }
 
+function clientAddress(req) {
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+function createFailureLimiter({ limit, windowMs, name }) {
+  const hits = new Map();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (entry.resetAt <= now) hits.delete(key);
+    }
+  }, windowMs).unref();
+
+  function check(keyPart) {
+    const now = Date.now();
+    const key = `${keyPart}:${name}`;
+    const entry = hits.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+      return { ok: true };
+    }
+
+    entry.count += 1;
+    if (entry.count <= limit) return { ok: true };
+
+    return {
+      ok: false,
+      retryAfter: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)),
+    };
+  }
+
+  function reset(keyPart) {
+    hits.delete(`${keyPart}:${name}`);
+  }
+
+  return { check, reset };
+}
+
+const authFailureLimiter = createFailureLimiter({
+  limit: AUTH_RATE_LIMIT,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  name: 'auth',
+});
+
 function authMiddleware(req, res, next) {
+  const address = clientAddress(req);
   const result = authResult(req);
   if (result.ok) {
+    authFailureLimiter.reset(address);
     if (result.setTokenCookie) {
       res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
     }
     return next();
+  }
+
+  const limitResult = authFailureLimiter.check(address);
+  if (!limitResult.ok) {
+    res.setHeader('Retry-After', String(limitResult.retryAfter));
+    return res.status(429).send('Too many authentication attempts');
   }
 
   res.setHeader('WWW-Authenticate', 'Basic realm="Wklejka"');
@@ -266,7 +321,7 @@ function createRateLimiter({ limit, windowMs, name }) {
 
   return (req, res, next) => {
     const now = Date.now();
-    const address = req.ip || req.socket.remoteAddress || 'unknown';
+    const address = clientAddress(req);
     const key = `${address}:${name}`;
     const entry = hits.get(key);
 
@@ -897,12 +952,20 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 
 server.on('upgrade', (req, socket, head) => {
+  const address = clientAddress(req);
   if (!authResult(req).ok) {
+    const limitResult = authFailureLimiter.check(address);
+    if (!limitResult.ok) {
+      socket.write(`HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${limitResult.retryAfter}\r\nConnection: close\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
     socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Wklejka"\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
   }
 
+  authFailureLimiter.reset(address);
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit('connection', ws, req);
   });
