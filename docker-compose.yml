@@ -4,5 +4,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./data:/app/data
+      - wklejka-data:/app/data
     restart: unless-stopped
+
+volumes:
+  wklejka-data:

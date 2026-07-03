@@ -18,8 +18,11 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./data:/app/data
+      - wklejka-data:/app/data
     restart: unless-stopped
+
+volumes:
+  wklejka-data:
 ```
 
 3. Start the service: `docker compose up -d`.
@@ -28,21 +31,32 @@ services:
 Alternatively, run the container directly:
 
 ```bash
-docker run --rm -p 3000:3000 -v ./data:/app/data ghcr.io/krbob/wklejka:latest
+docker run --rm -p 3000:3000 -v wklejka-data:/app/data ghcr.io/krbob/wklejka:latest
 ```
+
+If you prefer a bind mount such as `./data:/app/data`, make sure the directory is writable by UID 1000 (`node` inside the container).
 
 ## Features
 
-- **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 50 MB. Inline preview for PDFs, videos, and audio.
+- **Text, images & files** – paste (Ctrl+V), drag and drop, or use the file picker. Any file type up to 100 MB by default. Inline preview for PDFs, videos, and audio.
 - **Real-time sync** – WebSocket instantly propagates changes to every open browser.
 - **Tabs** – separate virtual documents (e.g. "Work", "Home") with optional auto-expiry (1 h, 24 h, 7 d, 30 d). Drag to reorder, double-click to rename.
 - **Tab locking** – lock a tab to prevent accidental deletion of the tab or its clips. Unlocking requires typing the tab name (like deleting a GitHub repo).
 - **Copy / Download / Delete** – on every entry. Delete requires inline confirmation.
 - **Link previews** – URLs in text clips automatically show a preview card with title, description, and image.
 - **Dark mode** – auto-detects system preference, manual toggle in header. Persisted across sessions.
-- **Persistent storage** – data lives in the `data/` directory and survives container restarts.
+- **Persistent storage** – data lives in `/app/data` (a Docker volume by default) and survives container restarts.
 - **Startup orphan cleanup** – unreferenced files in `data/files` and `data/images` are removed when the app starts.
 - **Multilingual** – UI automatically switches between Polish and English based on browser language.
+
+## Configuration
+
+- `MAX_CLIP_BINARY_BYTES` – max binary upload size, default `104857600` (100 MB).
+- `MAX_TEXT_CLIP_BYTES` – max text clip size, default `1048576` (1 MB).
+- `AUTH_USERNAME` and `AUTH_PASSWORD` – enable HTTP Basic Auth.
+- `AUTH_TOKEN` – enable token auth. Open `/?token=<token>` once to set an HttpOnly cookie.
+- `API_RATE_LIMIT` – max API requests per minute per client, default `600`.
+- `LINK_PREVIEW_RATE_LIMIT` – max link preview requests per minute per client, default `30`.
 
 ## UI language
 

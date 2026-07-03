@@ -1,10 +1,12 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -52,6 +54,9 @@ const INLINE_FILE_EXT_TO_MIME = new Map([
   ['webm', 'video/webm'],
 ]);
 const MAX_LINK_PREVIEW_REDIRECTS = 5;
+const MAX_LINK_PREVIEW_BYTES = 64 * 1024;
+const DEFAULT_MAX_TEXT_CLIP_BYTES = 1024 * 1024;
+const MAX_TEXT_CLIP_BYTES = readPositiveInt(process.env.MAX_TEXT_CLIP_BYTES, DEFAULT_MAX_TEXT_CLIP_BYTES);
 const DEFAULT_MAX_CLIP_BINARY_BYTES = 100 * 1024 * 1024;
 const MAX_CLIP_BINARY_BYTES = (() => {
   const parsed = Number.parseInt(process.env.MAX_CLIP_BINARY_BYTES || '', 10);
@@ -59,12 +64,25 @@ const MAX_CLIP_BINARY_BYTES = (() => {
 })();
 // Base64 expands binary payloads by roughly 33%; keep some extra headroom for the data URL prefix and JSON.
 const JSON_BODY_LIMIT_BYTES = Math.ceil(MAX_CLIP_BINARY_BYTES * 1.37) + 1024 * 1024;
+const AUTH_TOKEN = process.env.AUTH_TOKEN || process.env.WKLEJKA_TOKEN || '';
+const AUTH_USERNAME = process.env.AUTH_USERNAME || process.env.WKLEJKA_USER || '';
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD || process.env.WKLEJKA_PASSWORD || '';
+const AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
+const AUTH_COOKIE = 'wklejka_token';
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
+const LINK_PREVIEW_RATE_LIMIT = readPositiveInt(process.env.LINK_PREVIEW_RATE_LIMIT, 30);
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+function readPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function findClipByFilename(filename) {
@@ -137,8 +155,133 @@ function createFileTooLargeError() {
   return error;
 }
 
+function createTextTooLargeError() {
+  const error = new Error(`Text too large (max ${formatBytes(MAX_TEXT_CLIP_BYTES)})`);
+  error.status = 413;
+  return error;
+}
+
 function assertWithinUploadLimit(buffer) {
   if (buffer.length > MAX_CLIP_BINARY_BYTES) throw createFileTooLargeError();
+}
+
+function assertWithinTextLimit(text) {
+  if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_CLIP_BYTES) throw createTextTooLargeError();
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function parseCookies(header) {
+  return String(header || '')
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const eq = part.indexOf('=');
+      if (eq === -1) return cookies;
+      const name = part.slice(0, eq).trim();
+      const value = part.slice(eq + 1).trim();
+      try {
+        cookies[name] = decodeURIComponent(value);
+      } catch {
+        cookies[name] = value;
+      }
+      return cookies;
+    }, {});
+}
+
+function basicCredentials(header) {
+  const match = String(header || '').match(/^Basic\s+(.+)$/i);
+  if (!match) return null;
+
+  try {
+    const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator === -1) return null;
+    return {
+      username: decoded.slice(0, separator),
+      password: decoded.slice(separator + 1),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function authResult(req) {
+  if (!AUTH_ENABLED) return { ok: true };
+
+  const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  if (AUTH_TOKEN) {
+    const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1] || '';
+    if (safeEqual(bearer, AUTH_TOKEN)) return { ok: true };
+
+    const cookies = parseCookies(req.headers.cookie);
+    if (safeEqual(cookies[AUTH_COOKIE], AUTH_TOKEN)) return { ok: true };
+
+    const token = requestUrl.searchParams.get('token') || '';
+    if (safeEqual(token, AUTH_TOKEN)) return { ok: true, setTokenCookie: true };
+  }
+
+  if (AUTH_USERNAME && AUTH_PASSWORD) {
+    const credentials = basicCredentials(req.headers.authorization);
+    if (
+      credentials
+      && safeEqual(credentials.username, AUTH_USERNAME)
+      && safeEqual(credentials.password, AUTH_PASSWORD)
+    ) {
+      return { ok: true };
+    }
+  }
+
+  return { ok: false };
+}
+
+function authMiddleware(req, res, next) {
+  const result = authResult(req);
+  if (result.ok) {
+    if (result.setTokenCookie) {
+      res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
+    }
+    return next();
+  }
+
+  res.setHeader('WWW-Authenticate', 'Basic realm="Wklejka"');
+  return res.status(401).send('Authentication required');
+}
+
+function createRateLimiter({ limit, windowMs, name }) {
+  const hits = new Map();
+
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (entry.resetAt <= now) hits.delete(key);
+    }
+  }, windowMs).unref();
+
+  return (req, res, next) => {
+    const now = Date.now();
+    const address = req.ip || req.socket.remoteAddress || 'unknown';
+    const key = `${address}:${name}`;
+    const entry = hits.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      hits.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+
+    entry.count += 1;
+    if (entry.count <= limit) return next();
+
+    const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  };
 }
 
 function isPrivateIpv4(address) {
@@ -148,8 +291,15 @@ function isPrivateIpv4(address) {
     || parts[0] === 127
     || (parts[0] === 169 && parts[1] === 254)
     || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+    || (parts[0] === 192 && parts[1] === 0 && parts[2] === 0)
+    || (parts[0] === 192 && parts[1] === 0 && parts[2] === 2)
     || (parts[0] === 192 && parts[1] === 168)
-    || parts[0] === 0;
+    || (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19))
+    || (parts[0] === 198 && parts[1] === 51 && parts[2] === 100)
+    || (parts[0] === 203 && parts[1] === 0 && parts[2] === 113)
+    || parts[0] === 0
+    || parts[0] >= 224;
 }
 
 function isPrivateIpv6(address) {
@@ -158,7 +308,9 @@ function isPrivateIpv6(address) {
     || normalized === '::'
     || normalized.startsWith('fc')
     || normalized.startsWith('fd')
-    || normalized.startsWith('fe80:');
+    || normalized.startsWith('fe80:')
+    || normalized.startsWith('ff')
+    || normalized.startsWith('2001:db8:');
 }
 
 function isPrivateAddress(address) {
@@ -171,15 +323,20 @@ function isPrivateAddress(address) {
   return false;
 }
 
-async function assertSafePreviewTarget(urlString) {
-  const url = new URL(urlString);
+async function resolveSafePreviewTarget(url) {
   const hostname = url.hostname.toLowerCase();
 
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Unsupported protocol');
+  }
   if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
     throw new Error('URL points to a local address');
   }
   if (net.isIP(hostname) && isPrivateAddress(hostname)) {
     throw new Error('URL points to a private address');
+  }
+  if (net.isIP(hostname)) {
+    return [{ address: hostname, family: net.isIP(hostname) }];
   }
 
   const resolved = await dns.lookup(hostname, { all: true, verbatim: true });
@@ -187,31 +344,91 @@ async function assertSafePreviewTarget(urlString) {
     throw new Error('URL resolves to a private address');
   }
 
-  return url;
+  return resolved;
 }
 
 async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_REDIRECTS) {
-  const url = await assertSafePreviewTarget(urlString);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const url = new URL(urlString);
+  const addresses = await resolveSafePreviewTarget(url);
+  const selectedAddress = addresses[0];
+  const client = url.protocol === 'https:' ? https : http;
 
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Wklejka/1.0 (link-preview)' },
-      redirect: 'manual',
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const chunks = [];
+    let received = 0;
+
+    const finish = (response) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        status: response.statusCode || 0,
+        headers: response.headers,
+        text: Buffer.concat(chunks).toString('utf8'),
+      });
+    };
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const req = client.request(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Wklejka/1.0 (link-preview)',
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
+      },
+      lookup: (_hostname, options, callback) => {
+        if (options?.all) {
+          callback(null, [{ address: selectedAddress.address, family: selectedAddress.family }]);
+          return;
+        }
+        callback(null, selectedAddress.address, selectedAddress.family);
+      },
+    }, (response) => {
+      const location = response.headers.location;
+      if (response.statusCode >= 300 && response.statusCode < 400 && location) {
+        response.resume();
+        if (redirectsLeft <= 0) {
+          fail(new Error('Too many redirects'));
+          return;
+        }
+        fetchPreviewResponse(new URL(location, url).href, redirectsLeft - 1).then(resolve, reject);
+        settled = true;
+        return;
+      }
+
+      const contentType = String(response.headers['content-type'] || '').toLowerCase();
+      if (!contentType.includes('text/html')) {
+        response.resume();
+        finish(response);
+        return;
+      }
+
+      response.on('data', (chunk) => {
+        if (settled) return;
+        const remaining = MAX_LINK_PREVIEW_BYTES - received;
+        if (remaining > 0) {
+          chunks.push(chunk.length > remaining ? chunk.subarray(0, remaining) : chunk);
+          received += Math.min(chunk.length, remaining);
+        }
+        if (received >= MAX_LINK_PREVIEW_BYTES) {
+          finish(response);
+          response.destroy();
+        }
+      });
+      response.on('end', () => finish(response));
+      response.on('error', fail);
     });
 
-    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-      if (redirectsLeft <= 0) throw new Error('Too many redirects');
-      const nextUrl = new URL(response.headers.get('location'), url).href;
-      return fetchPreviewResponse(nextUrl, redirectsLeft - 1);
-    }
-
-    return response;
-  } finally {
-    clearTimeout(timeout);
-  }
+    req.setTimeout(5000, () => {
+      req.destroy(new Error('Preview request timed out'));
+    });
+    req.on('error', fail);
+    req.end();
+  });
 }
 
 // --- Store ---
@@ -378,6 +595,18 @@ loadStore();
 // --- Express ---
 
 const app = express();
+app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.use(authMiddleware);
+app.use('/api/link-preview', createRateLimiter({
+  limit: LINK_PREVIEW_RATE_LIMIT,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  name: 'link-preview',
+}));
+app.use('/api', createRateLimiter({
+  limit: API_RATE_LIMIT,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  name: 'api',
+}));
 app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -474,6 +703,7 @@ app.post('/api/boards/:id/clips', (req, res) => {
 
   const { type, content } = req.body;
   if (!type || !content) return res.status(400).json({ error: 'type and content required' });
+  if (!['text', 'image', 'file'].includes(type)) return res.status(400).json({ error: 'Unsupported clip type' });
 
   const clip = { id: generateId(), type, createdAt: Date.now() };
 
@@ -505,8 +735,10 @@ app.post('/api/boards/:id/clips', (req, res) => {
     clip.mimeType = match[1].toLowerCase();
     clip.fileUrl = `/api/files/${filename}`;
     clip.previewUrl = `/api/files/${filename}/preview`;
-  } else {
-    clip.content = content;
+  } else if (type === 'text') {
+    const text = String(content);
+    assertWithinTextLimit(text);
+    clip.content = text;
   }
 
   store.clips[id].unshift(clip);
@@ -585,12 +817,11 @@ app.get('/api/link-preview', async (req, res) => {
   }
   try {
     const response = await fetchPreviewResponse(url);
-    const contentType = response.headers.get('content-type') || '';
+    const contentType = String(response.headers['content-type'] || '').toLowerCase();
     if (!contentType.includes('text/html')) {
       return res.json({ title: '', description: '', image: '' });
     }
-    const text = await response.text();
-    const html = text.substring(0, 50000);
+    const html = response.text.substring(0, 50000);
 
     const getMeta = (property) => {
       const r1 = new RegExp(`<meta[^>]*property=["']${property}["'][^>]*content=["']([^"']*)["']`, 'i');
@@ -640,8 +871,20 @@ app.use((err, _req, res, next) => {
 // --- HTTP + WebSocket ---
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
+
+server.on('upgrade', (req, socket, head) => {
+  if (!authResult(req).ok) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Wklejka"\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req);
+  });
+});
 
 wss.on('connection', (ws) => {
   clients.add(ws);
