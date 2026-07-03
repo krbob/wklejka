@@ -7,6 +7,11 @@ const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
 const crypto = require('crypto');
+const {
+  clientAddress,
+  compileTrustProxy,
+  parseTrustProxy,
+} = require('./lib/proxy');
 const { isPrivateAddress } = require('./lib/security');
 const { createDefaultStore, normalizeStore } = require('./lib/store');
 
@@ -73,6 +78,7 @@ const AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
 const AUTH_COOKIE = 'wklejka_token';
 const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || 'auto').trim().toLowerCase();
 const TRUST_PROXY = parseTrustProxy(process.env.TRUST_PROXY);
+const TRUST_PROXY_FN = compileTrustProxy(TRUST_PROXY);
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT = readPositiveInt(process.env.AUTH_RATE_LIMIT, 20);
 const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
@@ -88,15 +94,6 @@ function generateId() {
 function readPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function parseTrustProxy(value) {
-  const raw = String(value || '').trim();
-  const normalized = raw.toLowerCase();
-  if (!normalized || ['false', '0', 'off', 'no'].includes(normalized)) return false;
-  if (['true', 'on', 'yes'].includes(normalized)) return true;
-  if (/^\d+$/.test(normalized)) return Number.parseInt(normalized, 10);
-  return raw;
 }
 
 function findClipByFilename(filename) {
@@ -278,36 +275,6 @@ function authCookieHeader(req) {
   return attributes.join('; ');
 }
 
-function forwardedForAddresses(req) {
-  return String(req.headers['x-forwarded-for'] || '')
-    .split(',')
-    .map(address => address.trim())
-    .filter(Boolean);
-}
-
-function forwardedClientAddress(req) {
-  if (!TRUST_PROXY) return null;
-
-  const forwarded = forwardedForAddresses(req);
-  if (!forwarded.length) return null;
-
-  if (TRUST_PROXY === true || typeof TRUST_PROXY === 'string') {
-    return forwarded[0];
-  }
-
-  if (typeof TRUST_PROXY === 'number' && TRUST_PROXY > 0) {
-    const chain = [...forwarded, req.socket.remoteAddress || ''];
-    const index = Math.max(0, chain.length - TRUST_PROXY - 1);
-    return chain[index] || null;
-  }
-
-  return null;
-}
-
-function clientAddress(req) {
-  return req.ip || forwardedClientAddress(req) || req.socket.remoteAddress || 'unknown';
-}
-
 function createFailureLimiter({ limit, windowMs, name }) {
   const hits = new Map();
 
@@ -351,7 +318,7 @@ const authFailureLimiter = createFailureLimiter({
 });
 
 function authMiddleware(req, res, next) {
-  const address = clientAddress(req);
+  const address = clientAddress(req, TRUST_PROXY_FN);
   const result = authResult(req);
   if (result.ok) {
     authFailureLimiter.reset(address);
@@ -383,7 +350,7 @@ function createRateLimiter({ limit, windowMs, name }) {
 
   return (req, res, next) => {
     const now = Date.now();
-    const address = clientAddress(req);
+    const address = clientAddress(req, TRUST_PROXY_FN);
     const key = `${address}:${name}`;
     const entry = hits.get(key);
 
@@ -950,7 +917,7 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 
 server.on('upgrade', (req, socket, head) => {
-  const address = clientAddress(req);
+  const address = clientAddress(req, TRUST_PROXY_FN);
   if (!authResult(req).ok) {
     const limitResult = authFailureLimiter.check(address);
     if (!limitResult.ok) {
