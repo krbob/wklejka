@@ -69,6 +69,8 @@ const AUTH_USERNAME = process.env.AUTH_USERNAME || process.env.WKLEJKA_USER || '
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || process.env.WKLEJKA_PASSWORD || '';
 const AUTH_ENABLED = Boolean(AUTH_TOKEN || (AUTH_USERNAME && AUTH_PASSWORD));
 const AUTH_COOKIE = 'wklejka_token';
+const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || 'auto').trim().toLowerCase();
+const TRUST_PROXY = parseTrustProxy(process.env.TRUST_PROXY);
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT = readPositiveInt(process.env.AUTH_RATE_LIMIT, 20);
 const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
@@ -84,6 +86,15 @@ function generateId() {
 function readPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseTrustProxy(value) {
+  const raw = String(value || '').trim();
+  const normalized = raw.toLowerCase();
+  if (!normalized || ['false', '0', 'off', 'no'].includes(normalized)) return false;
+  if (['true', 'on', 'yes'].includes(normalized)) return true;
+  if (/^\d+$/.test(normalized)) return Number.parseInt(normalized, 10);
+  return raw;
 }
 
 function findClipByFilename(filename) {
@@ -242,8 +253,57 @@ function authResult(req) {
   return { ok: false };
 }
 
+function boolEnv(value, fallback) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'auto') return fallback;
+  if (['true', '1', 'on', 'yes'].includes(normalized)) return true;
+  if (['false', '0', 'off', 'no'].includes(normalized)) return false;
+  return fallback;
+}
+
+function shouldUseSecureCookie(req) {
+  return boolEnv(AUTH_COOKIE_SECURE, !!req.secure);
+}
+
+function authCookieHeader(req) {
+  const attributes = [
+    `${AUTH_COOKIE}=${encodeURIComponent(AUTH_TOKEN)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+  ];
+  if (shouldUseSecureCookie(req)) attributes.push('Secure');
+  return attributes.join('; ');
+}
+
+function forwardedForAddresses(req) {
+  return String(req.headers['x-forwarded-for'] || '')
+    .split(',')
+    .map(address => address.trim())
+    .filter(Boolean);
+}
+
+function forwardedClientAddress(req) {
+  if (!TRUST_PROXY) return null;
+
+  const forwarded = forwardedForAddresses(req);
+  if (!forwarded.length) return null;
+
+  if (TRUST_PROXY === true || typeof TRUST_PROXY === 'string') {
+    return forwarded[0];
+  }
+
+  if (typeof TRUST_PROXY === 'number' && TRUST_PROXY > 0) {
+    const chain = [...forwarded, req.socket.remoteAddress || ''];
+    const index = Math.max(0, chain.length - TRUST_PROXY - 1);
+    return chain[index] || null;
+  }
+
+  return null;
+}
+
 function clientAddress(req) {
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  return req.ip || forwardedClientAddress(req) || req.socket.remoteAddress || 'unknown';
 }
 
 function createFailureLimiter({ limit, windowMs, name }) {
@@ -294,7 +354,7 @@ function authMiddleware(req, res, next) {
   if (result.ok) {
     authFailureLimiter.reset(address);
     if (result.setTokenCookie) {
-      res.setHeader('Set-Cookie', `${AUTH_COOKIE}=${encodeURIComponent(AUTH_TOKEN)}; Path=/; HttpOnly; SameSite=Strict`);
+      res.setHeader('Set-Cookie', authCookieHeader(req));
     }
     return next();
   }
@@ -650,6 +710,7 @@ loadStore();
 // --- Express ---
 
 const app = express();
+app.set('trust proxy', TRUST_PROXY);
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.use(authMiddleware);
 app.use('/api/link-preview', createRateLimiter({

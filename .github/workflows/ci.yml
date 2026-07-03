@@ -266,6 +266,49 @@ jobs:
           curl -fsS -H 'Authorization: Bearer secret' "${base}/api/boards" | grep -q 'default'
           echo "Auth rate limit test passed"
 
+      - name: Smoke test proxy auth settings
+        run: |
+          set -euo pipefail
+          base="http://localhost:${{ env.APP_PORT }}"
+
+          docker rm -f app
+          docker run -d --name app \
+            -e AUTH_TOKEN=secret \
+            -e AUTH_RATE_LIMIT=1 \
+            -e AUTH_COOKIE_SECURE=auto \
+            -e TRUST_PROXY=1 \
+            -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" \
+            wklejka:test
+
+          for _attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 "${base}/healthz" > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS -D /tmp/wklejka-headers.txt -o /dev/null \
+            -H 'X-Forwarded-Proto: https' \
+            "${base}/?token=secret"
+          grep -qi 'Set-Cookie: .*; Secure' /tmp/wklejka-headers.txt
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'X-Forwarded-For: 203.0.113.10' \
+            "${base}/api/boards")
+          [ "$HTTP_CODE" = "401" ] || { echo "Expected 401, got $HTTP_CODE"; exit 1; }
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'X-Forwarded-For: 203.0.113.10' \
+            "${base}/api/boards")
+          [ "$HTTP_CODE" = "429" ] || { echo "Expected 429, got $HTTP_CODE"; exit 1; }
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'X-Forwarded-For: 203.0.113.11' \
+            "${base}/api/boards")
+          [ "$HTTP_CODE" = "401" ] || { echo "Expected 401, got $HTTP_CODE"; exit 1; }
+
+          echo "Proxy auth settings test passed"
+
       - name: Clean up
         if: always()
         run: docker rm -f app || true

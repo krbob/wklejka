@@ -58,9 +58,13 @@ If you prefer a bind mount such as `./data:/app/data`, make sure the directory i
 - `MAX_TEXT_CLIP_BYTES` – max text clip size, default `1048576` (1 MB).
 - `AUTH_USERNAME` and `AUTH_PASSWORD` – enable HTTP Basic Auth.
 - `AUTH_TOKEN` – enable token auth. Open `/?token=<token>` once to set an HttpOnly cookie.
+- `AUTH_COOKIE_SECURE` – controls the auth cookie `Secure` flag: `auto` (default), `true`, or `false`.
 - `AUTH_RATE_LIMIT` – max failed authentication attempts per minute per client, default `20`.
 - `API_RATE_LIMIT` – max API requests per minute per client, default `600`.
 - `LINK_PREVIEW_RATE_LIMIT` – max link preview requests per minute per client, default `30`.
+- `TRUST_PROXY` – Express trust proxy setting, disabled by default. Use behind a trusted reverse proxy (for example `1` or `loopback`) so rate limits use the real client IP and `AUTH_COOKIE_SECURE=auto` detects HTTPS.
+
+Only enable `TRUST_PROXY` when Wklejka is reachable through a trusted proxy that controls `X-Forwarded-*` headers. Do not enable it on a directly exposed public listener.
 
 ## UI language
 
