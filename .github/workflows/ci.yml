@@ -16,6 +16,8 @@ env:
   NODE_ENV: test
   TEST_URLS: |
     /
+    /livez
+    /readyz
     /api/boards
 
 jobs:
@@ -39,6 +41,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Run quality checks
         run: npm run check
@@ -396,11 +401,13 @@ jobs:
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="${GITHUB_REPOSITORY#*/}"
           IMAGE="ghcr.io/${OWNER}/${REPO}"
-          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+          SHA_TAG="sha-${GITHUB_SHA}"
 
           {
             echo "image=${IMAGE}"
             echo "sha_tag=${SHA_TAG}"
+            echo "amd64_tag=${SHA_TAG}-amd64"
+            echo "arm64_tag=${SHA_TAG}-arm64"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -410,14 +417,70 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push amd64 image
+        id: build_amd64
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
-          tags: |
-            ${{ steps.image.outputs.image }}:${{ steps.image.outputs.sha_tag }}
-            ${{ steps.image.outputs.image }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.amd64_tag }}
+          cache-from: type=gha,scope=publish-amd64
+          cache-to: type=gha,mode=max,scope=publish-amd64
+
+      - name: Build and push arm64 image
+        id: build_arm64
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.arm64_tag }}
+          cache-from: type=gha,scope=publish-arm64
+          cache-to: type=gha,mode=max,scope=publish-arm64
+
+      - name: Scan published platform images
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_TAG: ${{ steps.image.outputs.amd64_tag }}
+          ARM64_TAG: ${{ steps.image.outputs.arm64_tag }}
+        run: |
+          set -euo pipefail
+
+          scan_image() {
+            local platform="$1"
+            local reference="$2"
+
+            docker pull --platform "$platform" "$reference"
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f image \
+              --exit-code 1 \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --quiet \
+              --no-progress \
+              --table-mode summary \
+              --timeout 5m \
+              --image-src docker \
+              --platform "$platform" \
+              "$reference"
+          }
+
+          scan_image linux/amd64 "${IMAGE}:${AMD64_TAG}"
+          scan_image linux/arm64 "${IMAGE}:${ARM64_TAG}"
+
+      - name: Publish canonical multi-platform tags
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          SHA_TAG: ${{ steps.image.outputs.sha_tag }}
+          AMD64_DIGEST: ${{ steps.build_amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ steps.build_arm64.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${SHA_TAG}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${AMD64_DIGEST}" \
+            "${IMAGE}@${ARM64_DIGEST}"
