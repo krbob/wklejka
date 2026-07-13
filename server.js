@@ -86,13 +86,27 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT = readPositiveInt(process.env.AUTH_RATE_LIMIT, 20);
 const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
 const LINK_PREVIEW_RATE_LIMIT = readPositiveInt(process.env.LINK_PREVIEW_RATE_LIMIT, 30);
+const LINK_PREVIEW_CACHE_TTL_MS = readNonNegativeInt(process.env.LINK_PREVIEW_CACHE_TTL_MS, 60 * 60 * 1000);
+const LINK_PREVIEW_NEGATIVE_CACHE_TTL_MS = readNonNegativeInt(
+  process.env.LINK_PREVIEW_NEGATIVE_CACHE_TTL_MS,
+  60 * 1000,
+);
+const LINK_PREVIEW_CACHE_MAX_ENTRIES = readPositiveInt(process.env.LINK_PREVIEW_CACHE_MAX_ENTRIES, 256);
 const MAX_BOARDS = readPositiveInt(process.env.MAX_BOARDS, 100);
 const MAX_CLIPS_PER_BOARD = readPositiveInt(process.env.MAX_CLIPS_PER_BOARD, 10_000);
 const MAX_TOTAL_CLIPS = readPositiveInt(process.env.MAX_TOTAL_CLIPS, 50_000);
+const MAX_CLIPS_PAGE_SIZE = readPositiveInt(process.env.MAX_CLIPS_PAGE_SIZE, 200);
+const DEFAULT_CLIPS_PAGE_SIZE = Math.min(readPositiveInt(process.env.DEFAULT_CLIPS_PAGE_SIZE, 50), MAX_CLIPS_PAGE_SIZE);
+const MAX_BULK_DELETE = readPositiveInt(process.env.MAX_BULK_DELETE, 100);
 const MAX_STORAGE_BYTES = readPositiveInt(process.env.MAX_STORAGE_BYTES, 5 * 1024 * 1024 * 1024);
+const CLIP_RETENTION_MS = readNonNegativeInt(process.env.CLIP_RETENTION_MS, 0);
+const MAX_CLIP_EXPIRY_MS = readPositiveInt(process.env.MAX_CLIP_EXPIRY_MS, 365 * 24 * 60 * 60 * 1000);
+const ORPHAN_GRACE_MS = readNonNegativeInt(process.env.ORPHAN_GRACE_MS, 5 * 60 * 1000);
 const STORE_SAVE_DEBOUNCE_MS = readPositiveInt(process.env.STORE_SAVE_DEBOUNCE_MS, 20);
 const STORE_SAVE_MAX_WAIT_MS = readPositiveInt(process.env.STORE_SAVE_MAX_WAIT_MS, 200);
 const LOG_REQUESTS = boolEnv(process.env.LOG_REQUESTS, true);
+const HSTS_MAX_AGE = readNonNegativeInt(process.env.HSTS_MAX_AGE, 365 * 24 * 60 * 60);
+const HSTS_INCLUDE_SUBDOMAINS = boolEnv(process.env.HSTS_INCLUDE_SUBDOMAINS, false);
 const MAX_BOARD_NAME_LENGTH = readPositiveInt(process.env.MAX_BOARD_NAME_LENGTH, 120);
 const MAX_ORIGINAL_NAME_LENGTH = readPositiveInt(process.env.MAX_ORIGINAL_NAME_LENGTH, 255);
 const MAX_WS_CLIENTS = readPositiveInt(process.env.MAX_WS_CLIENTS, 100);
@@ -103,6 +117,15 @@ const WS_ALLOW_NO_ORIGIN = boolEnv(process.env.WS_ALLOW_NO_ORIGIN, false);
 const CONFIGURED_PUBLIC_ORIGINS = parsePublicOrigins(
   process.env.PUBLIC_ORIGIN || process.env.PUBLIC_ORIGINS || '',
 );
+const runtimeMetrics = {
+  httpRequests: new Map(),
+  httpRequestDurationSeconds: 0,
+  linkPreviewCacheHits: 0,
+  linkPreviewCacheMisses: 0,
+  linkPreviewInflightDeduplications: 0,
+  storeWriteFailures: 0,
+  maintenanceRuns: 0,
+};
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -114,6 +137,11 @@ function generateId() {
 function readPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function isPlainObject(value) {
@@ -295,6 +323,94 @@ function assertCanAddClip(candidateStore, boardId, additionalBytes = 0, storageB
   if (storageBytes + activeUploadBytes + additionalBytes > MAX_STORAGE_BYTES) {
     throw httpError(507, `Storage quota exceeded (max ${formatBytes(MAX_STORAGE_BYTES)})`, 'STORAGE_QUOTA_EXCEEDED');
   }
+}
+
+function compareClips(left, right) {
+  const pinnedDifference = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+  if (pinnedDifference) return pinnedDifference;
+  const timeDifference = Number(right.createdAt || 0) - Number(left.createdAt || 0);
+  if (timeDifference) return timeDifference;
+  return String(right.id).localeCompare(String(left.id));
+}
+
+function encodeClipCursor(clip) {
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    p: Boolean(clip.pinned),
+    t: Number(clip.createdAt || 0),
+    i: clip.id,
+  })).toString('base64url');
+}
+
+function decodeClipCursor(value) {
+  if (typeof value !== 'string' || !value || value.length > 512) {
+    throw httpError(400, 'Invalid cursor', 'INVALID_CURSOR');
+  }
+  try {
+    const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (
+      !isPlainObject(cursor)
+      || cursor.v !== 1
+      || typeof cursor.p !== 'boolean'
+      || !Number.isSafeInteger(cursor.t)
+      || cursor.t < 0
+    ) {
+      throw new Error('Invalid cursor payload');
+    }
+    assertSafeId(cursor.i, 'cursor clip id');
+    return { id: cursor.i, pinned: cursor.p, createdAt: cursor.t };
+  } catch (error) {
+    if (error.status === 400) throw error;
+    throw httpError(400, 'Invalid cursor', 'INVALID_CURSOR');
+  }
+}
+
+function clipsQuery(query) {
+  const allowed = new Set(['limit', 'cursor', 'q', 'type']);
+  const keys = Object.keys(query);
+  const unknown = keys.find(key => !allowed.has(key));
+  if (unknown) throw httpError(400, `Unknown query parameter: ${unknown}`);
+  if (!keys.length) return null;
+
+  let limit = DEFAULT_CLIPS_PAGE_SIZE;
+  if (query.limit !== undefined) {
+    if (typeof query.limit !== 'string' || !/^[1-9]\d*$/.test(query.limit)) {
+      throw httpError(400, 'limit must be a positive integer', 'INVALID_LIMIT');
+    }
+    limit = Number(query.limit);
+    if (limit > MAX_CLIPS_PAGE_SIZE) {
+      throw httpError(400, `limit cannot exceed ${MAX_CLIPS_PAGE_SIZE}`, 'INVALID_LIMIT');
+    }
+  }
+
+  let search = '';
+  if (query.q !== undefined) {
+    if (typeof query.q !== 'string' || query.q.length > 200) {
+      throw httpError(400, 'q must be a string no longer than 200 characters', 'INVALID_SEARCH');
+    }
+    search = query.q.trim().toLowerCase();
+  }
+
+  let type = null;
+  if (query.type !== undefined) {
+    if (typeof query.type !== 'string' || !['text', 'image', 'file'].includes(query.type)) {
+      throw httpError(400, 'type must be text, image or file', 'INVALID_CLIP_TYPE');
+    }
+    type = query.type;
+  }
+
+  return {
+    limit,
+    search,
+    type,
+    cursor: query.cursor === undefined ? null : decodeClipCursor(query.cursor),
+  };
+}
+
+function clipMatchesSearch(clip, search) {
+  if (!search) return true;
+  return [clip.content, clip.originalName, clip.mimeType, clip.filename]
+    .some(value => typeof value === 'string' && value.toLowerCase().includes(search));
 }
 
 function safeEqual(a, b) {
@@ -528,6 +644,7 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
         status: response.statusCode || 0,
         headers: response.headers,
         text: Buffer.concat(chunks).toString('utf8'),
+        url: url.href,
       });
     };
 
@@ -763,6 +880,7 @@ function commitStoreMutation(mutator) {
     try {
       await storeWriter.enqueue(draft);
     } catch (error) {
+      runtimeMetrics.storeWriteFailures += 1;
       console.error(JSON.stringify({
         level: 'error',
         event: 'store_write_failed',
@@ -801,13 +919,41 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=()');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' ws: wss:",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
+    "frame-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "manifest-src 'self'",
+    "worker-src 'self'",
+  ].join('; '));
+  if (req.secure && HSTS_MAX_AGE > 0) {
+    res.setHeader(
+      'Strict-Transport-Security',
+      `max-age=${HSTS_MAX_AGE}${HSTS_INCLUDE_SUBDOMAINS ? '; includeSubDomains' : ''}`,
+    );
+  }
   if (req.path === '/healthz' || req.path === '/livez' || req.path === '/readyz' || req.path.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store');
   }
-  if (LOG_REQUESTS) {
-    const startedAt = process.hrtime.bigint();
-    res.on('finish', () => {
-      if (!req.path.startsWith('/api/') && res.statusCode < 400) return;
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1e9;
+    const metricMethod = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'].includes(req.method)
+      ? req.method
+      : 'OTHER';
+    const metricStatus = res.statusCode >= 100 && res.statusCode <= 599 ? res.statusCode : 0;
+    const metricKey = `${metricMethod}:${metricStatus}`;
+    runtimeMetrics.httpRequests.set(metricKey, (runtimeMetrics.httpRequests.get(metricKey) || 0) + 1);
+    runtimeMetrics.httpRequestDurationSeconds += durationSeconds;
+    if (LOG_REQUESTS && (req.path.startsWith('/api/') || res.statusCode >= 400)) {
       console.log(JSON.stringify({
         level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
         event: 'http_request',
@@ -815,11 +961,11 @@ app.use((req, res, next) => {
         method: req.method,
         path: req.path,
         status: res.statusCode,
-        durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+        durationMs: durationSeconds * 1000,
         client: clientAddress(req, TRUST_PROXY_FN),
       }));
-    });
-  }
+    }
+  });
   next();
 });
 app.get(['/healthz', '/livez'], (_req, res) => res.json({ ok: true }));
@@ -940,7 +1086,13 @@ async function receiveUpload(req, tempFile) {
     return { size: received, prefix, release };
   } catch (error) {
     release();
-    if (req.aborted) throw httpError(400, 'Upload aborted', 'UPLOAD_ABORTED');
+    if (error.status === 413 || error.code === 'STORAGE_QUOTA_EXCEEDED') throw error;
+    if (
+      req.aborted
+      && ['ABORT_ERR', 'ECONNRESET', 'ERR_STREAM_PREMATURE_CLOSE'].includes(error.code)
+    ) {
+      throw httpError(400, 'Upload aborted', 'UPLOAD_ABORTED');
+    }
     throw error;
   }
 }
@@ -1038,13 +1190,126 @@ app.get('/api/status', (_req, res) => {
       maxBytes: MAX_STORAGE_BYTES,
       persistence: writerStatus,
     },
+    linkPreviewCache: {
+      entries: linkPreviewCache?.size || 0,
+      inFlight: linkPreviewInflight?.size || 0,
+      maxEntries: LINK_PREVIEW_CACHE_MAX_ENTRIES,
+      ttlMs: LINK_PREVIEW_CACHE_TTL_MS,
+      negativeTtlMs: LINK_PREVIEW_NEGATIVE_CACHE_TTL_MS,
+    },
     limits: {
       maxBoards: MAX_BOARDS,
       maxClipsPerBoard: MAX_CLIPS_PER_BOARD,
       maxTotalClips: MAX_TOTAL_CLIPS,
       maxBinaryBytes: MAX_CLIP_BINARY_BYTES,
       maxTextBytes: MAX_TEXT_CLIP_BYTES,
+      maxPageSize: MAX_CLIPS_PAGE_SIZE,
+      maxBulkDelete: MAX_BULK_DELETE,
+      clipRetentionMs: CLIP_RETENTION_MS,
+      maxClipExpiryMs: MAX_CLIP_EXPIRY_MS,
     },
+  });
+});
+
+function prometheusLabel(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
+app.get('/api/metrics', (_req, res) => {
+  const writerStatus = storeWriter.status();
+  const requestCount = [...runtimeMetrics.httpRequests.values()].reduce((total, count) => total + count, 0);
+  const lines = [
+    '# HELP wklejka_up Whether the process is running.',
+    '# TYPE wklejka_up gauge',
+    'wklejka_up 1',
+    '# HELP wklejka_store_ready Whether metadata persistence is ready.',
+    '# TYPE wklejka_store_ready gauge',
+    `wklejka_store_ready ${writerStatus.ready && !shuttingDown ? 1 : 0}`,
+    '# TYPE wklejka_boards gauge',
+    `wklejka_boards ${store.boards.length}`,
+    '# TYPE wklejka_clips gauge',
+    `wklejka_clips ${totalClipCount()}`,
+    '# TYPE wklejka_websocket_clients gauge',
+    `wklejka_websocket_clients ${clients?.size || 0}`,
+    '# TYPE wklejka_storage_bytes gauge',
+    `wklejka_storage_bytes ${storedBinaryBytes}`,
+    '# TYPE wklejka_storage_limit_bytes gauge',
+    `wklejka_storage_limit_bytes ${MAX_STORAGE_BYTES}`,
+    '# TYPE wklejka_active_upload_bytes gauge',
+    `wklejka_active_upload_bytes ${activeUploadBytes}`,
+    '# TYPE wklejka_process_resident_memory_bytes gauge',
+    `wklejka_process_resident_memory_bytes ${process.memoryUsage().rss}`,
+    '# TYPE wklejka_http_request_duration_seconds summary',
+    `wklejka_http_request_duration_seconds_sum ${runtimeMetrics.httpRequestDurationSeconds}`,
+    `wklejka_http_request_duration_seconds_count ${requestCount}`,
+    '# TYPE wklejka_store_write_failures_total counter',
+    `wklejka_store_write_failures_total ${runtimeMetrics.storeWriteFailures}`,
+    '# TYPE wklejka_maintenance_runs_total counter',
+    `wklejka_maintenance_runs_total ${runtimeMetrics.maintenanceRuns}`,
+    '# TYPE wklejka_link_preview_cache_hits_total counter',
+    `wklejka_link_preview_cache_hits_total ${runtimeMetrics.linkPreviewCacheHits}`,
+    '# TYPE wklejka_link_preview_cache_misses_total counter',
+    `wklejka_link_preview_cache_misses_total ${runtimeMetrics.linkPreviewCacheMisses}`,
+    '# TYPE wklejka_link_preview_inflight_deduplications_total counter',
+    `wklejka_link_preview_inflight_deduplications_total ${runtimeMetrics.linkPreviewInflightDeduplications}`,
+    '# TYPE wklejka_link_preview_cache_entries gauge',
+    `wklejka_link_preview_cache_entries ${linkPreviewCache?.size || 0}`,
+  ];
+  for (const [key, count] of [...runtimeMetrics.httpRequests.entries()].sort()) {
+    const [method, status] = key.split(':');
+    lines.push(`wklejka_http_requests_total{method="${prometheusLabel(method)}",status="${prometheusLabel(status)}"} ${count}`);
+  }
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(`${lines.join('\n')}\n`);
+});
+
+app.get('/api/export', (_req, res) => {
+  const filename = `wklejka-metadata-${new Date().toISOString().slice(0, 10)}.json`;
+  res.setHeader('Content-Disposition', contentDisposition('attachment', filename));
+  res.json({
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    boards: store.boards,
+    clips: store.clips,
+  });
+});
+
+app.post('/api/maintenance/cleanup', async (req, res) => {
+  runtimeMetrics.maintenanceRuns += 1;
+  const body = req.body === undefined
+    ? {}
+    : assertBodyObject(req.body, ['dryRun', 'boardId', 'olderThan']);
+  const dryRun = body.dryRun === undefined ? true : body.dryRun;
+  if (typeof dryRun !== 'boolean') throw httpError(400, 'dryRun must be a boolean');
+  const boardId = body.boardId === undefined ? null : assertSafeId(body.boardId, 'board id');
+  if (boardId && !store.clips[boardId]) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+  const olderThan = body.olderThan === undefined ? null : body.olderThan;
+  if (
+    olderThan !== null
+    && (!Number.isSafeInteger(olderThan) || olderThan <= 0 || olderThan > Date.now())
+  ) {
+    throw httpError(400, 'olderThan must be a past Unix timestamp in milliseconds');
+  }
+
+  const cleanup = await cleanupExpiredContent({ dryRun, boardId, olderThan });
+  const orphans = cleanOrphanFiles({ includeRecent: false, dryRun });
+  const matched = {
+    boards: cleanup.expiredBoards.length,
+    clips: cleanup.clipEvents.length,
+    orphans: orphans.candidates,
+  };
+  res.json({
+    ok: true,
+    dryRun,
+    matched,
+    deleted: dryRun ? { boards: 0, clips: 0, orphans: 0 } : {
+      boards: matched.boards,
+      clips: matched.clips,
+      orphans: orphans.removed,
+    },
+    reclaimedBytes: dryRun
+      ? cleanup.reclaimedBytes + orphans.candidateBytes
+      : cleanup.reclaimedBytes + orphans.reclaimedBytes,
   });
 });
 
@@ -1100,7 +1365,11 @@ app.put('/api/boards/:id', async (req, res) => {
     }
     if (body.locked !== undefined) {
       if (typeof body.locked !== 'boolean') throw httpError(400, 'locked must be a boolean');
-      candidate.locked = body.locked;
+      if (id === 'default' && body.locked) {
+        throw httpError(400, 'Default board cannot be locked', 'DEFAULT_BOARD_CANNOT_BE_LOCKED');
+      }
+      if (body.locked) candidate.locked = true;
+      else delete candidate.locked;
     }
     return candidate;
   });
@@ -1152,7 +1421,19 @@ app.delete('/api/boards/:id', async (req, res) => {
 // Clips
 app.get('/api/boards/:id/clips', (req, res) => {
   const id = assertSafeId(req.params.id, 'board id');
-  res.json(store.clips[id] || []);
+  const query = clipsQuery(req.query);
+  let clips = [...(store.clips[id] || [])].sort(compareClips);
+  if (!query) return res.json(clips);
+
+  if (query.type) clips = clips.filter(clip => clip.type === query.type);
+  if (query.search) clips = clips.filter(clip => clipMatchesSearch(clip, query.search));
+  const total = clips.length;
+  if (query.cursor) clips = clips.filter(clip => compareClips(clip, query.cursor) > 0);
+  const items = clips.slice(0, query.limit);
+  const nextCursor = clips.length > items.length && items.length
+    ? encodeClipCursor(items[items.length - 1])
+    : null;
+  return res.json({ items, nextCursor, total });
 });
 
 app.post('/api/boards/:id/clips', async (req, res) => {
@@ -1230,14 +1511,101 @@ app.post('/api/boards/:id/clips', async (req, res) => {
   res.json(clip);
 });
 
+function removeClipsFromDraft(draft, context, boardId, ids) {
+  const idSet = new Set(ids);
+  const boardClips = draft.clips[boardId] || [];
+  const removed = boardClips.filter(clip => idSet.has(clip.id));
+  const removedIds = new Set(removed.map(clip => clip.id));
+  const files = removed
+    .map(clip => ({ filepath: clipStoragePath(clip), size: clipDiskSize(clip) }))
+    .filter(item => item.filepath);
+  const reclaimedBytes = files.reduce((total, item) => total + item.size, 0);
+  draft.clips[boardId] = boardClips.filter(clip => !removedIds.has(clip.id));
+  context.storedBinaryBytes -= reclaimedBytes;
+  return {
+    deletedIds: removed.map(clip => clip.id),
+    notFoundIds: ids.filter(id => !removedIds.has(id)),
+    reclaimedBytes,
+    files,
+  };
+}
+
+app.post('/api/boards/:id/clips/bulk-delete', async (req, res) => {
+  const boardId = assertSafeId(req.params.id, 'board id');
+  const { ids } = assertBodyObject(req.body, ['ids']);
+  if (!Array.isArray(ids) || !ids.length) throw httpError(400, 'ids must be a non-empty array');
+  if (ids.length > MAX_BULK_DELETE) {
+    throw httpError(400, `ids cannot contain more than ${MAX_BULK_DELETE} entries`);
+  }
+  ids.forEach(id => assertSafeId(id, 'clip id'));
+  if (new Set(ids).size !== ids.length) throw httpError(400, 'ids must be unique');
+
+  const result = await commitStoreMutation((draft, context) => {
+    if (!draft.clips[boardId]) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+    const board = draft.boards.find(candidate => candidate.id === boardId);
+    if (board?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
+    return removeClipsFromDraft(draft, context, boardId, ids);
+  });
+  for (const clipId of result.deletedIds) {
+    broadcast({ type: 'clip-deleted', boardId, clipId });
+  }
+  await unlinkCommittedFiles(result.files);
+  res.json({
+    ok: true,
+    deleted: result.deletedIds.length,
+    deletedIds: result.deletedIds,
+    notFoundIds: result.notFoundIds,
+    reclaimedBytes: result.reclaimedBytes,
+  });
+});
+
 app.put('/api/boards/:boardId/clips/:clipId', async (req, res) => {
   const boardId = assertSafeId(req.params.boardId, 'board id');
   const clipId = assertSafeId(req.params.clipId, 'clip id');
-  const body = assertBodyObject(req.body, ['content']);
-  if (typeof body.content !== 'string') throw httpError(400, 'content must be a string');
-  const content = body.content;
-  if (!content.trim()) return res.status(400).json({ error: 'Content required' });
-  assertWithinTextLimit(content);
+  const body = assertBodyObject(req.body, ['content', 'pinned', 'expiresAt', 'expiresIn']);
+  if (!Object.keys(body).length) throw httpError(400, 'At least one field is required');
+  if (body.content !== undefined) {
+    if (typeof body.content !== 'string') throw httpError(400, 'content must be a string');
+    if (!body.content.trim()) throw httpError(400, 'Content required');
+    assertWithinTextLimit(body.content);
+  }
+  if (body.pinned !== undefined && typeof body.pinned !== 'boolean') {
+    throw httpError(400, 'pinned must be a boolean');
+  }
+  if (body.expiresAt !== undefined && body.expiresIn !== undefined) {
+    throw httpError(400, 'expiresAt and expiresIn are mutually exclusive');
+  }
+
+  const now = Date.now();
+  let nextExpiresAt;
+  let expiryProvided = false;
+  if (body.expiresAt !== undefined) {
+    expiryProvided = true;
+    if (body.expiresAt === null) {
+      nextExpiresAt = null;
+    } else if (
+      !Number.isSafeInteger(body.expiresAt)
+      || body.expiresAt <= now
+      || body.expiresAt > now + MAX_CLIP_EXPIRY_MS
+    ) {
+      throw httpError(400, `expiresAt must be within the next ${MAX_CLIP_EXPIRY_MS} ms`);
+    } else {
+      nextExpiresAt = body.expiresAt;
+    }
+  } else if (body.expiresIn !== undefined) {
+    expiryProvided = true;
+    if (body.expiresIn === null) {
+      nextExpiresAt = null;
+    } else if (
+      !Number.isSafeInteger(body.expiresIn)
+      || body.expiresIn <= 0
+      || body.expiresIn > MAX_CLIP_EXPIRY_MS
+    ) {
+      throw httpError(400, `expiresIn must be a positive integer no greater than ${MAX_CLIP_EXPIRY_MS}`);
+    } else {
+      nextExpiresAt = now + body.expiresIn;
+    }
+  }
 
   const clip = await commitStoreMutation((draft) => {
     const boardClips = draft.clips[boardId];
@@ -1246,8 +1614,18 @@ app.put('/api/boards/:boardId/clips/:clipId', async (req, res) => {
     if (lockedBoard?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
     const candidate = boardClips.find(item => item.id === clipId);
     if (!candidate) throw httpError(404, 'Clip not found', 'CLIP_NOT_FOUND');
-    if (candidate.type !== 'text') throw httpError(400, 'Only text clips can be edited');
-    candidate.content = content;
+    if (body.content !== undefined) {
+      if (candidate.type !== 'text') throw httpError(400, 'Only text clips can be edited');
+      candidate.content = body.content;
+    }
+    if (body.pinned !== undefined) {
+      if (body.pinned) candidate.pinned = true;
+      else delete candidate.pinned;
+    }
+    if (expiryProvided) {
+      if (nextExpiresAt === null) delete candidate.expiresAt;
+      else candidate.expiresAt = nextExpiresAt;
+    }
     candidate.updatedAt = Date.now();
     return candidate;
   });
@@ -1320,52 +1698,145 @@ app.get('/api/files/:filename/preview', (req, res) => {
 });
 
 // Link preview
-app.get('/api/link-preview', async (req, res) => {
-  const url = req.query.url;
-  if (typeof url !== 'string' || url.length > 2048 || !(url.startsWith('http://') || url.startsWith('https://'))) {
-    return res.status(400).json({ error: 'Invalid URL' });
+const linkPreviewCache = new Map();
+const linkPreviewInflight = new Map();
+
+function normalizePreviewPageUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048) {
+    throw httpError(400, 'Invalid URL', 'INVALID_URL');
   }
   try {
-    const response = await fetchPreviewResponse(url);
-    const contentType = String(response.headers['content-type'] || '').toLowerCase();
-    if (!contentType.includes('text/html')) {
-      return res.json({ title: '', description: '', image: '' });
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+      throw new Error('Unsupported URL');
     }
-    const html = response.text.substring(0, 50000);
+    url.hash = '';
+    return url;
+  } catch {
+    throw httpError(400, 'Invalid URL', 'INVALID_URL');
+  }
+}
 
-    const getMeta = (property) => {
-      const r1 = new RegExp(`<meta[^>]*property=["']${property}["'][^>]*content=["']([^"']*)["']`, 'i');
-      const m1 = html.match(r1);
-      if (m1) return m1[1];
-      const r2 = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*property=["']${property}["']`, 'i');
-      return html.match(r2)?.[1] || '';
-    };
-    const getMetaName = (name) => {
-      const r1 = new RegExp(`<meta[^>]*name=["']${name}["'][^>]*content=["']([^"']*)["']`, 'i');
-      const m1 = html.match(r1);
-      if (m1) return m1[1];
-      const r2 = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*name=["']${name}["']`, 'i');
-      return html.match(r2)?.[1] || '';
-    };
-    const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
 
-    const title = decode(getMeta('og:title') || html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '');
-    const description = decode(getMeta('og:description') || getMetaName('description'));
-    let image = getMeta('og:image');
-    if (image && !image.startsWith('http')) {
-      try { image = new URL(image, url).href; } catch {}
+function linkPreviewCacheGet(key) {
+  const entry = linkPreviewCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    linkPreviewCache.delete(key);
+    return null;
+  }
+  linkPreviewCache.delete(key);
+  linkPreviewCache.set(key, entry);
+  return entry;
+}
+
+function linkPreviewCacheSet(key, value, { error = null, ttlMs = LINK_PREVIEW_CACHE_TTL_MS } = {}) {
+  if (ttlMs <= 0) return;
+  linkPreviewCache.delete(key);
+  linkPreviewCache.set(key, { value, error, expiresAt: Date.now() + ttlMs });
+  while (linkPreviewCache.size > LINK_PREVIEW_CACHE_MAX_ENTRIES) {
+    linkPreviewCache.delete(linkPreviewCache.keys().next().value);
+  }
+}
+
+async function normalizePreviewImage(value, pageUrl) {
+  if (!value) return '';
+  try {
+    const imageUrl = new URL(decodeHtmlEntities(value), pageUrl);
+    if (!['http:', 'https:'].includes(imageUrl.protocol) || imageUrl.username || imageUrl.password) return '';
+    imageUrl.hash = '';
+    await resolveSafePreviewTarget(imageUrl);
+    return imageUrl.href;
+  } catch {
+    return '';
+  }
+}
+
+async function buildLinkPreview(url) {
+  const response = await fetchPreviewResponse(url.href);
+  const contentType = String(response.headers['content-type'] || '').toLowerCase();
+  if (!contentType.includes('text/html')) return { title: '', description: '', image: '' };
+  const html = response.text.substring(0, 50000);
+  const getMeta = (attribute, name) => {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const first = new RegExp(`<meta[^>]*${attribute}=["']${escapedName}["'][^>]*content=["']([^"']*)["']`, 'i');
+    const firstMatch = html.match(first);
+    if (firstMatch) return firstMatch[1];
+    const second = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*${attribute}=["']${escapedName}["']`, 'i');
+    return html.match(second)?.[1] || '';
+  };
+  const title = decodeHtmlEntities(
+    getMeta('property', 'og:title') || html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1],
+  );
+  const description = decodeHtmlEntities(
+    getMeta('property', 'og:description') || getMeta('name', 'description'),
+  );
+  const image = await normalizePreviewImage(getMeta('property', 'og:image'), response.url);
+  return {
+    title: title.substring(0, 200),
+    description: description.substring(0, 500),
+    image,
+  };
+}
+
+async function getLinkPreview(url) {
+  const key = url.href;
+  const cached = linkPreviewCacheGet(key);
+  if (cached) {
+    runtimeMetrics.linkPreviewCacheHits += 1;
+    if (cached.error) {
+      throw Object.assign(new Error(cached.error.message), {
+        status: cached.error.status,
+        code: cached.error.code,
+      });
     }
+    return cached.value;
+  }
+  const inflight = linkPreviewInflight.get(key);
+  if (inflight) {
+    runtimeMetrics.linkPreviewInflightDeduplications += 1;
+    return inflight;
+  }
+  runtimeMetrics.linkPreviewCacheMisses += 1;
+  const request = buildLinkPreview(url)
+    .then((preview) => {
+      linkPreviewCacheSet(key, preview);
+      return preview;
+    })
+    .catch((error) => {
+      linkPreviewCacheSet(key, null, {
+        error: {
+          message: error.message || 'Failed to fetch',
+          status: error.status,
+          code: error.code,
+        },
+        ttlMs: LINK_PREVIEW_NEGATIVE_CACHE_TTL_MS,
+      });
+      throw error;
+    })
+    .finally(() => linkPreviewInflight.delete(key));
+  linkPreviewInflight.set(key, request);
+  return request;
+}
 
-    res.json({
-      title: title.substring(0, 200),
-      description: description.substring(0, 500),
-      image: image || '',
-    });
+app.get('/api/link-preview', async (req, res) => {
+  try {
+    const url = normalizePreviewPageUrl(req.query.url);
+    return res.json(await getLinkPreview(url));
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({ error: error.message, code: error.code });
     if (/private address|local address|Too many redirects/i.test(error.message)) {
       return res.status(400).json({ error: 'URL not allowed' });
     }
-    res.status(500).json({ error: 'Failed to fetch' });
+    return res.status(502).json({ error: 'Failed to fetch' });
   }
 });
 
@@ -1493,7 +1964,7 @@ wss.on('connection', (ws) => {
   clients.add(ws);
   ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', () => {
-    // The channel is server-push only. Ignore client frames deliberately.
+    ws.close(1008, 'Server-push channel');
   });
   ws.on('close', () => clients.delete(ws));
   ws.on('error', () => {
@@ -1534,45 +2005,112 @@ websocketHeartbeat.unref();
 
 // --- Expiry cleanup (every 60s) ---
 
-let expiryCleanupRunning = false;
+let expiryCleanupPromise = null;
 
-async function cleanupExpiredBoards() {
-  if (expiryCleanupRunning || shuttingDown) return;
-  const now = Date.now();
-  if (!store.boards.some(board => board.expiresAt && now > board.expiresAt)) return;
-  expiryCleanupRunning = true;
-  try {
-    const result = await commitStoreMutation((draft, context) => {
-      const expired = draft.boards.filter(board => board.expiresAt && now > board.expiresAt);
-      const ids = new Set(expired.map(board => board.id));
-      const files = expired.flatMap(board => boardFileData(draft, board.id));
-      draft.boards = draft.boards.filter(board => !ids.has(board.id));
-      for (const id of ids) delete draft.clips[id];
-      context.storedBinaryBytes -= files.reduce((total, item) => total + item.size, 0);
-      return { expired, files };
-    });
-    for (const board of result.expired) {
-      console.log(JSON.stringify({ level: 'info', event: 'board_expired', boardId: board.id }));
-      broadcast({ type: 'board-deleted', boardId: board.id });
+function buildCleanupPlan(candidateStore, now, { boardId = null, olderThan = null } = {}) {
+  const expiredBoards = candidateStore.boards.filter(board => (
+    board.id !== 'default'
+    && (!boardId || board.id === boardId)
+    && Number.isSafeInteger(board.expiresAt)
+    && board.expiresAt <= now
+  ));
+  const expiredBoardIds = new Set(expiredBoards.map(board => board.id));
+  const clipEvents = [];
+  const removedClipIds = new Map();
+
+  for (const board of candidateStore.boards) {
+    if (expiredBoardIds.has(board.id) || (boardId && board.id !== boardId)) continue;
+    const ids = [];
+    for (const clip of candidateStore.clips[board.id] || []) {
+      const explicitlyExpired = Number.isSafeInteger(clip.expiresAt) && clip.expiresAt <= now;
+      const oldEnoughForRetention = !clip.pinned
+        && CLIP_RETENTION_MS > 0
+        && Number.isSafeInteger(clip.createdAt)
+        && clip.createdAt <= now - CLIP_RETENTION_MS;
+      const oldEnoughForMaintenance = !clip.pinned
+        && olderThan !== null
+        && Number.isSafeInteger(clip.createdAt)
+        && clip.createdAt < olderThan;
+      if (!explicitlyExpired && !oldEnoughForRetention && !oldEnoughForMaintenance) continue;
+      ids.push(clip.id);
+      clipEvents.push({ boardId: board.id, clipId: clip.id });
     }
-    await unlinkCommittedFiles(result.files);
-  } catch (error) {
+    if (ids.length) removedClipIds.set(board.id, new Set(ids));
+  }
+
+  const files = expiredBoards.flatMap(board => boardFileData(candidateStore, board.id));
+  for (const [id, ids] of removedClipIds) {
+    for (const clip of candidateStore.clips[id] || []) {
+      if (!ids.has(clip.id)) continue;
+      const filepath = clipStoragePath(clip);
+      if (filepath) files.push({ filepath, size: clipDiskSize(clip) });
+    }
+  }
+
+  return {
+    expiredBoards,
+    expiredBoardIds,
+    removedClipIds,
+    clipEvents,
+    files,
+    reclaimedBytes: files.reduce((total, item) => total + item.size, 0),
+  };
+}
+
+async function performCleanup({ dryRun = false, boardId = null, olderThan = null } = {}) {
+  const now = Date.now();
+  const initialPlan = buildCleanupPlan(store, now, { boardId, olderThan });
+  if (dryRun || (!initialPlan.expiredBoards.length && !initialPlan.clipEvents.length)) {
+    return initialPlan;
+  }
+
+  const result = await commitStoreMutation((draft, context) => {
+    const plan = buildCleanupPlan(draft, now, { boardId, olderThan });
+    draft.boards = draft.boards.filter(board => !plan.expiredBoardIds.has(board.id));
+    for (const id of plan.expiredBoardIds) delete draft.clips[id];
+    for (const [id, ids] of plan.removedClipIds) {
+      draft.clips[id] = (draft.clips[id] || []).filter(clip => !ids.has(clip.id));
+    }
+    context.storedBinaryBytes -= plan.reclaimedBytes;
+    return plan;
+  });
+
+  for (const board of result.expiredBoards) {
+    console.log(JSON.stringify({ level: 'info', event: 'board_expired', boardId: board.id }));
+    broadcast({ type: 'board-deleted', boardId: board.id });
+  }
+  for (const event of result.clipEvents) {
+    broadcast({ type: 'clip-deleted', ...event });
+  }
+  await unlinkCommittedFiles(result.files);
+  return result;
+}
+
+async function cleanupExpiredContent(options) {
+  if (expiryCleanupPromise) await expiryCleanupPromise;
+  const operation = performCleanup(options);
+  expiryCleanupPromise = operation.catch(() => {});
+  try {
+    return await operation;
+  } finally {
+    expiryCleanupPromise = null;
+  }
+}
+
+const expiryCleanupTimer = setInterval(() => {
+  void cleanupExpiredContent().catch((error) => {
     console.error(JSON.stringify({
       level: 'error',
       event: 'expiry_cleanup_failed',
       message: error.message,
     }));
-  } finally {
-    expiryCleanupRunning = false;
-  }
-}
-
-const expiryCleanupTimer = setInterval(() => { void cleanupExpiredBoards(); }, 60_000);
+  });
+}, 60_000);
 expiryCleanupTimer.unref();
 
 // --- Orphan file cleanup on startup ---
 
-function cleanOrphanFiles() {
+function cleanOrphanFiles({ includeRecent = false, dryRun = false } = {}) {
   const referencedImages = new Set();
   const referencedFiles = new Set();
   for (const clips of Object.values(store.clips)) {
@@ -1582,7 +2120,11 @@ function cleanOrphanFiles() {
     }
   }
 
+  let candidates = 0;
   let removed = 0;
+  let candidateBytes = 0;
+  let reclaimedBytes = 0;
+  const cutoff = Date.now() - ORPHAN_GRACE_MS;
   for (const [dir, label, referenced] of [
     [IMAGES_DIR, 'image', referencedImages],
     [FILES_DIR, 'file', referencedFiles],
@@ -1591,27 +2133,40 @@ function cleanOrphanFiles() {
     try { files = fs.readdirSync(dir); } catch { continue; }
     for (const f of files) {
       if (!referenced.has(f)) {
+        const filepath = path.join(dir, f);
+        let stat;
+        try { stat = fs.statSync(filepath); } catch { continue; }
+        if (!includeRecent && stat.mtimeMs > cutoff) continue;
+        candidates++;
+        const size = stat.isFile() ? stat.size : 0;
+        candidateBytes += size;
+        if (dryRun) continue;
         try {
-          fs.unlinkSync(path.join(dir, f));
+          fs.unlinkSync(filepath);
           removed++;
+          reclaimedBytes += size;
           console.log(`Orphan ${label} removed: ${f}`);
         } catch {}
       }
     }
   }
-  try {
-    for (const file of fs.readdirSync(DATA_DIR)) {
-      if (!/^\.store-.*\.tmp$/.test(file)) continue;
-      try {
-        fs.unlinkSync(path.join(DATA_DIR, file));
-        removed++;
-      } catch {}
-    }
-  } catch {}
+  if (includeRecent && !dryRun) {
+    try {
+      for (const file of fs.readdirSync(DATA_DIR)) {
+        if (!/^\.store-.*\.tmp$/.test(file)) continue;
+        try {
+          fs.unlinkSync(path.join(DATA_DIR, file));
+          removed++;
+          candidates++;
+        } catch {}
+      }
+    } catch {}
+  }
   if (removed) console.log(`Orphan cleanup: removed ${removed} file(s)`);
+  return { candidates, removed, candidateBytes, reclaimedBytes };
 }
 
-cleanOrphanFiles();
+cleanOrphanFiles({ includeRecent: true });
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wklejka running at http://0.0.0.0:${PORT}`);
@@ -1662,6 +2217,7 @@ function shutdown(signal) {
       // Stop accepting requests, close upgraded connections, let active HTTP
       // requests settle, then flush the serialized mutation/store queues.
       await Promise.all([closeHttpServer(), closeWebsockets()]);
+      if (expiryCleanupPromise) await expiryCleanupPromise;
       await flushStore();
       await storeWriter.close();
     } catch (error) {
