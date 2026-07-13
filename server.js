@@ -7,6 +7,8 @@ const fs = require('fs');
 const dns = require('dns').promises;
 const net = require('net');
 const crypto = require('crypto');
+const { Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 const {
   clientAddress,
   compileTrustProxy,
@@ -83,6 +85,20 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT = readPositiveInt(process.env.AUTH_RATE_LIMIT, 20);
 const API_RATE_LIMIT = readPositiveInt(process.env.API_RATE_LIMIT, 600);
 const LINK_PREVIEW_RATE_LIMIT = readPositiveInt(process.env.LINK_PREVIEW_RATE_LIMIT, 30);
+const MAX_BOARDS = readPositiveInt(process.env.MAX_BOARDS, 100);
+const MAX_CLIPS_PER_BOARD = readPositiveInt(process.env.MAX_CLIPS_PER_BOARD, 10_000);
+const MAX_TOTAL_CLIPS = readPositiveInt(process.env.MAX_TOTAL_CLIPS, 50_000);
+const MAX_STORAGE_BYTES = readPositiveInt(process.env.MAX_STORAGE_BYTES, 5 * 1024 * 1024 * 1024);
+const MAX_BOARD_NAME_LENGTH = readPositiveInt(process.env.MAX_BOARD_NAME_LENGTH, 120);
+const MAX_ORIGINAL_NAME_LENGTH = readPositiveInt(process.env.MAX_ORIGINAL_NAME_LENGTH, 255);
+const MAX_WS_CLIENTS = readPositiveInt(process.env.MAX_WS_CLIENTS, 100);
+const MAX_WS_PAYLOAD_BYTES = readPositiveInt(process.env.MAX_WS_PAYLOAD_BYTES, 64 * 1024);
+const MAX_WS_BACKPRESSURE_BYTES = readPositiveInt(process.env.MAX_WS_BACKPRESSURE_BYTES, 1024 * 1024);
+const WS_HEARTBEAT_MS = readPositiveInt(process.env.WS_HEARTBEAT_MS, 30 * 1000);
+const WS_ALLOW_NO_ORIGIN = boolEnv(process.env.WS_ALLOW_NO_ORIGIN, false);
+const CONFIGURED_PUBLIC_ORIGINS = parsePublicOrigins(
+  process.env.PUBLIC_ORIGIN || process.env.PUBLIC_ORIGINS || '',
+);
 
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
@@ -94,6 +110,77 @@ function generateId() {
 function readPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function httpError(status, message, code = 'BAD_REQUEST') {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  error.expose = true;
+  return error;
+}
+
+function assertBodyObject(body, allowedKeys) {
+  if (!isPlainObject(body)) throw httpError(400, 'JSON object required');
+  const unknown = Object.keys(body).find(key => !allowedKeys.includes(key));
+  if (unknown) throw httpError(400, `Unknown field: ${unknown}`);
+  return body;
+}
+
+function requiredString(value, name, maxLength, { trim = false } = {}) {
+  if (typeof value !== 'string') throw httpError(400, `${name} must be a string`);
+  const normalized = trim ? value.trim() : value;
+  if (!normalized) throw httpError(400, `${name} required`);
+  if (normalized.length > maxLength) throw httpError(400, `${name} is too long`);
+  if (/[\0]/.test(normalized)) throw httpError(400, `${name} contains invalid characters`);
+  return normalized;
+}
+
+function assertSafeId(value, name = 'id') {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) {
+    throw httpError(400, `Invalid ${name}`);
+  }
+  return value;
+}
+
+function parsePublicOrigins(value) {
+  const origins = new Set();
+  for (const part of String(value || '').split(',')) {
+    const candidate = part.trim();
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin === 'null') continue;
+      if (parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password) continue;
+      origins.add(parsed.origin);
+    } catch {}
+  }
+  return origins;
+}
+
+function safeRequestUrl(req) {
+  try {
+    return new URL(String(req.url || '/'), 'http://localhost');
+  } catch {
+    return null;
+  }
+}
+
+function safeHostHeader(value) {
+  if (typeof value !== 'string' || !value || value.length > 255 || /[\0-\x20\x7f]/.test(value)) return null;
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+    return parsed.host;
+  } catch {
+    return null;
+  }
 }
 
 function findClipByFilename(filename) {
@@ -180,6 +267,32 @@ function assertWithinTextLimit(text) {
   if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_CLIP_BYTES) throw createTextTooLargeError();
 }
 
+function totalClipCount(candidateStore = store) {
+  return Object.values(candidateStore.clips).reduce((total, clips) => total + clips.length, 0);
+}
+
+function assertCanAddBoard() {
+  if (store.boards.length >= MAX_BOARDS) {
+    throw httpError(409, `Board limit reached (max ${MAX_BOARDS})`, 'BOARD_LIMIT_REACHED');
+  }
+}
+
+function assertCanAddClip(boardId, additionalBytes = 0) {
+  const boardClips = store.clips[boardId];
+  if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+  const board = store.boards.find(candidate => candidate.id === boardId);
+  if (board?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
+  if (boardClips.length >= MAX_CLIPS_PER_BOARD) {
+    throw httpError(409, `Clip limit reached for this board (max ${MAX_CLIPS_PER_BOARD})`, 'CLIP_LIMIT_REACHED');
+  }
+  if (totalClipCount() >= MAX_TOTAL_CLIPS) {
+    throw httpError(409, `Total clip limit reached (max ${MAX_TOTAL_CLIPS})`, 'TOTAL_CLIP_LIMIT_REACHED');
+  }
+  if (storedBinaryBytes + activeUploadBytes + additionalBytes > MAX_STORAGE_BYTES) {
+    throw httpError(507, `Storage quota exceeded (max ${formatBytes(MAX_STORAGE_BYTES)})`, 'STORAGE_QUOTA_EXCEEDED');
+  }
+}
+
 function safeEqual(a, b) {
   const left = Buffer.from(String(a || ''));
   const right = Buffer.from(String(b || ''));
@@ -225,7 +338,8 @@ function basicCredentials(header) {
 function authResult(req) {
   if (!AUTH_ENABLED) return { ok: true };
 
-  const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  const requestUrl = safeRequestUrl(req);
+  if (!requestUrl) return { ok: false };
 
   if (AUTH_TOKEN) {
     const bearer = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i)?.[1] || '';
@@ -481,6 +595,33 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
 let store = { boards: [], clips: {} };
 let saveTimeout = null;
 let storeDirty = false;
+let storedBinaryBytes = 0;
+let activeUploadBytes = 0;
+
+function clipStoragePath(clip) {
+  if (!clip?.filename) return null;
+  if (clip.type === 'image') return path.join(IMAGES_DIR, clip.filename);
+  if (clip.type === 'file') return path.join(FILES_DIR, clip.filename);
+  return null;
+}
+
+function clipDiskSize(clip) {
+  const filepath = clipStoragePath(clip);
+  if (!filepath) return 0;
+  try {
+    return fs.statSync(filepath).size;
+  } catch {
+    return Number.isSafeInteger(clip.size) && clip.size > 0 ? clip.size : 0;
+  }
+}
+
+function calculateStoredBinaryBytes(candidateStore = store) {
+  let total = 0;
+  for (const clips of Object.values(candidateStore.clips)) {
+    for (const clip of clips) total += clipDiskSize(clip);
+  }
+  return total;
+}
 
 function timestampForFilename() {
   return new Date().toISOString().replace(/[:.]/g, '-');
@@ -610,11 +751,23 @@ function flushStore() {
 }
 
 loadStore();
+storedBinaryBytes = calculateStoredBinaryBytes();
 
 // --- Express ---
 
 const app = express();
 app.set('trust proxy', TRUST_PROXY);
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=()');
+  if (req.path === '/healthz' || req.path === '/livez' || req.path === '/readyz' || req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  next();
+});
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 app.use(authMiddleware);
 app.use('/api/link-preview', createRateLimiter({
@@ -627,6 +780,177 @@ app.use('/api', createRateLimiter({
   windowMs: RATE_LIMIT_WINDOW_MS,
   name: 'api',
 }));
+
+function requestContentLength(req) {
+  const value = req.headers['content-length'];
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    throw httpError(400, 'Invalid Content-Length', 'INVALID_CONTENT_LENGTH');
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw httpError(400, 'Invalid Content-Length', 'INVALID_CONTENT_LENGTH');
+  }
+  return parsed;
+}
+
+function uploadMimeType(req) {
+  const value = req.headers['content-type'];
+  if (value !== undefined && typeof value !== 'string') {
+    throw httpError(400, 'Invalid Content-Type', 'INVALID_CONTENT_TYPE');
+  }
+  const mimeType = String(value || 'application/octet-stream').split(';', 1)[0].trim().toLowerCase();
+  if (!/^[a-z0-9!#$&^_.+\-]{1,63}\/[a-z0-9!#$&^_.+\-]{1,63}$/.test(mimeType)) {
+    throw httpError(400, 'Invalid Content-Type', 'INVALID_CONTENT_TYPE');
+  }
+  return mimeType;
+}
+
+function uploadOriginalName(req) {
+  const value = req.headers['x-original-name'];
+  if (value === undefined) return 'file';
+  if (typeof value !== 'string' || value.length > MAX_ORIGINAL_NAME_LENGTH * 4) {
+    throw httpError(400, 'Invalid X-Original-Name', 'INVALID_ORIGINAL_NAME');
+  }
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw httpError(400, 'Invalid X-Original-Name encoding', 'INVALID_ORIGINAL_NAME');
+  }
+  return downloadBasename(requiredString(decoded, 'X-Original-Name', MAX_ORIGINAL_NAME_LENGTH));
+}
+
+function imageSignatureMatches(mimeType, prefix) {
+  if (mimeType === 'image/png') {
+    return prefix.length >= 8 && prefix.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  }
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+    return prefix.length >= 3 && prefix[0] === 0xff && prefix[1] === 0xd8 && prefix[2] === 0xff;
+  }
+  if (mimeType === 'image/gif') {
+    return prefix.length >= 6 && ['GIF87a', 'GIF89a'].includes(prefix.subarray(0, 6).toString('ascii'));
+  }
+  if (mimeType === 'image/webp') {
+    return prefix.length >= 12
+      && prefix.subarray(0, 4).toString('ascii') === 'RIFF'
+      && prefix.subarray(8, 12).toString('ascii') === 'WEBP';
+  }
+  return false;
+}
+
+async function receiveUpload(req, tempFile) {
+  let received = 0;
+  let prefix = Buffer.alloc(0);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    activeUploadBytes = Math.max(0, activeUploadBytes - received);
+  };
+
+  const meter = new Transform({
+    transform(chunk, _encoding, callback) {
+      try {
+        if (received + chunk.length > MAX_CLIP_BINARY_BYTES) throw createFileTooLargeError();
+        if (storedBinaryBytes + activeUploadBytes + chunk.length > MAX_STORAGE_BYTES) {
+          throw httpError(
+            507,
+            `Storage quota exceeded (max ${formatBytes(MAX_STORAGE_BYTES)})`,
+            'STORAGE_QUOTA_EXCEEDED',
+          );
+        }
+        received += chunk.length;
+        activeUploadBytes += chunk.length;
+        if (prefix.length < 16) {
+          prefix = Buffer.concat([prefix, chunk.subarray(0, 16 - prefix.length)]);
+        }
+        callback(null, chunk);
+      } catch (error) {
+        callback(error);
+      }
+    },
+  });
+
+  try {
+    await pipeline(req, meter, fs.createWriteStream(tempFile, { flags: 'wx', mode: 0o600 }));
+    return { size: received, prefix, release };
+  } catch (error) {
+    release();
+    if (req.aborted) throw httpError(400, 'Upload aborted', 'UPLOAD_ABORTED');
+    throw error;
+  }
+}
+
+// Streaming binary upload. This route must remain before express.json so the
+// request stream is never buffered or converted to base64 by middleware.
+app.post('/api/boards/:id/uploads', async (req, res) => {
+  const boardId = assertSafeId(req.params.id, 'board id');
+  const clipType = req.headers['x-clip-type'];
+  if (clipType !== 'image' && clipType !== 'file') {
+    throw httpError(400, 'X-Clip-Type must be image or file', 'INVALID_CLIP_TYPE');
+  }
+
+  const mimeType = uploadMimeType(req);
+  const ext = clipType === 'image' ? SAFE_IMAGE_MIME_TYPES.get(mimeType) : null;
+  if (clipType === 'image' && !ext) {
+    throw httpError(400, 'Unsupported image type', 'UNSUPPORTED_IMAGE_TYPE');
+  }
+  const originalName = clipType === 'file' ? uploadOriginalName(req) : null;
+  const contentLength = requestContentLength(req);
+  if (contentLength === 0) throw httpError(400, 'Upload body required', 'EMPTY_UPLOAD');
+  if (contentLength !== null && contentLength > MAX_CLIP_BINARY_BYTES) throw createFileTooLargeError();
+  assertCanAddClip(boardId, contentLength || 0);
+
+  const clip = { id: generateId(), type: clipType, createdAt: Date.now() };
+  const safeName = clipType === 'file'
+    ? originalName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file'
+    : null;
+  const filename = clipType === 'image' ? `${clip.id}.${ext}` : `${clip.id}_${safeName}`;
+  const targetDir = clipType === 'image' ? IMAGES_DIR : FILES_DIR;
+  const finalFile = path.join(targetDir, filename);
+  let tempFile = path.join(targetDir, `.upload-${process.pid}-${clip.id}.tmp`);
+  let reservation;
+  let committed = false;
+
+  try {
+    reservation = await receiveUpload(req, tempFile);
+    if (reservation.size === 0) throw httpError(400, 'Upload body required', 'EMPTY_UPLOAD');
+    if (clipType === 'image' && !imageSignatureMatches(mimeType, reservation.prefix)) {
+      throw httpError(400, 'Image content does not match Content-Type', 'INVALID_IMAGE_DATA');
+    }
+
+    // Recheck mutable quotas and lock state after a potentially long upload.
+    assertCanAddClip(boardId);
+    await fs.promises.rename(tempFile, finalFile);
+    tempFile = null;
+
+    clip.filename = filename;
+    clip.size = reservation.size;
+    clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+    if (clipType === 'image') {
+      clip.imageUrl = `/api/images/${filename}`;
+    } else {
+      clip.originalName = originalName;
+      clip.fileUrl = `/api/files/${filename}`;
+      clip.previewUrl = `/api/files/${filename}/preview`;
+    }
+
+    store.clips[boardId].unshift(clip);
+    storedBinaryBytes += reservation.size;
+    saveStore();
+    committed = true;
+    broadcast({ type: 'clip-added', boardId, clip });
+    res.json(clip);
+  } catch (error) {
+    if (tempFile) await fs.promises.unlink(tempFile).catch(() => {});
+    if (!committed) await fs.promises.unlink(finalFile).catch(() => {});
+    throw error;
+  } finally {
+    reservation?.release();
+  }
+});
+
 app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -636,11 +960,16 @@ app.get('/api/boards', (_req, res) => {
 });
 
 app.post('/api/boards', (req, res) => {
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'Name required' });
+  const body = assertBodyObject(req.body, ['name', 'expiresIn']);
+  const name = requiredString(body.name, 'Name', MAX_BOARD_NAME_LENGTH, { trim: true });
+  assertCanAddBoard();
   const board = { id: generateId(), name, createdAt: Date.now(), expiresAt: null };
-  if (req.body.expiresIn && Number(req.body.expiresIn) > 0) {
-    board.expiresAt = Date.now() + Number(req.body.expiresIn);
+  if (body.expiresIn !== undefined && body.expiresIn !== null && body.expiresIn !== '') {
+    const expiresIn = Number(body.expiresIn);
+    if (!Number.isSafeInteger(expiresIn) || expiresIn <= 0 || expiresIn > 365 * 24 * 60 * 60 * 1000) {
+      throw httpError(400, 'expiresIn must be a positive integer no greater than one year');
+    }
+    board.expiresAt = Date.now() + expiresIn;
   }
   store.boards.push(board);
   store.clips[board.id] = [];
@@ -650,8 +979,9 @@ app.post('/api/boards', (req, res) => {
 });
 
 app.put('/api/boards/reorder', (req, res) => {
-  const { ids } = req.body;
+  const { ids } = assertBodyObject(req.body, ['ids']);
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  ids.forEach(id => assertSafeId(id, 'board id'));
   const currentIds = store.boards.map(board => board.id);
   if (ids.length !== currentIds.length) {
     return res.status(400).json({ error: 'ids must include every board exactly once' });
@@ -672,15 +1002,17 @@ app.put('/api/boards/reorder', (req, res) => {
 });
 
 app.put('/api/boards/:id', (req, res) => {
-  const board = store.boards.find(b => b.id === req.params.id);
+  const id = assertSafeId(req.params.id, 'board id');
+  const body = assertBodyObject(req.body, ['name', 'locked']);
+  if (!Object.keys(body).length) throw httpError(400, 'At least one field is required');
+  const board = store.boards.find(b => b.id === id);
   if (!board) return res.status(404).json({ error: 'Board not found' });
-  if (req.body.name !== undefined) {
-    const name = (req.body.name || '').trim();
-    if (!name) return res.status(400).json({ error: 'Name required' });
-    board.name = name;
+  if (body.name !== undefined) {
+    board.name = requiredString(body.name, 'Name', MAX_BOARD_NAME_LENGTH, { trim: true });
   }
-  if (req.body.locked !== undefined) {
-    board.locked = !!req.body.locked;
+  if (body.locked !== undefined) {
+    if (typeof body.locked !== 'boolean') throw httpError(400, 'locked must be a boolean');
+    board.locked = body.locked;
   }
   saveStore();
   broadcast({ type: 'board-updated', board });
@@ -690,6 +1022,7 @@ app.put('/api/boards/:id', (req, res) => {
 function removeBoardData(id) {
   store.boards = store.boards.filter(b => b.id !== id);
   (store.clips[id] || []).forEach(clip => {
+    storedBinaryBytes = Math.max(0, storedBinaryBytes - clipDiskSize(clip));
     if (clip.type === 'image' && clip.filename) {
       try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
     }
@@ -701,7 +1034,7 @@ function removeBoardData(id) {
 }
 
 app.delete('/api/boards/:id', (req, res) => {
-  const { id } = req.params;
+  const id = assertSafeId(req.params.id, 'board id');
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
   const board = store.boards.find(b => b.id === id);
   if (board && board.locked) return res.status(403).json({ error: 'Board is locked' });
@@ -714,38 +1047,48 @@ app.delete('/api/boards/:id', (req, res) => {
 
 // Clips
 app.get('/api/boards/:id/clips', (req, res) => {
-  res.json(store.clips[req.params.id] || []);
+  const id = assertSafeId(req.params.id, 'board id');
+  res.json(store.clips[id] || []);
 });
 
 app.post('/api/boards/:id/clips', (req, res) => {
-  const { id } = req.params;
-  if (!store.clips[id]) return res.status(404).json({ error: 'Board not found' });
+  const id = assertSafeId(req.params.id, 'board id');
+  assertCanAddClip(id);
 
-  const { type, content } = req.body;
-  if (!type || !content) return res.status(400).json({ error: 'type and content required' });
+  const body = assertBodyObject(req.body, ['type', 'content', 'originalName']);
+  const { type, content } = body;
+  if (typeof type !== 'string' || typeof content !== 'string' || !content) {
+    return res.status(400).json({ error: 'type and content required' });
+  }
   if (!['text', 'image', 'file'].includes(type)) return res.status(400).json({ error: 'Unsupported clip type' });
 
   const clip = { id: generateId(), type, createdAt: Date.now() };
 
   if (type === 'image') {
-    const match = content.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/);
+    const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
     if (!match) return res.status(400).json({ error: 'Invalid image data' });
     const mimeType = match[1].toLowerCase();
     const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
     if (!ext) return res.status(400).json({ error: 'Unsupported image type' });
     const buffer = Buffer.from(match[2], 'base64');
     assertWithinUploadLimit(buffer);
+    assertCanAddClip(id, buffer.length);
     const filename = `${clip.id}.${ext}`;
     fs.writeFileSync(path.join(IMAGES_DIR, filename), buffer);
     clip.filename = filename;
+    clip.size = buffer.length;
     clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
     clip.imageUrl = `/api/images/${filename}`;
+    storedBinaryBytes += buffer.length;
   } else if (type === 'file') {
-    const match = content.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/);
+    const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
     if (!match) return res.status(400).json({ error: 'Invalid file data' });
     const buffer = Buffer.from(match[2], 'base64');
     assertWithinUploadLimit(buffer);
-    const originalName = req.body.originalName || 'file';
+    assertCanAddClip(id, buffer.length);
+    const originalName = body.originalName === undefined
+      ? 'file'
+      : requiredString(body.originalName, 'originalName', MAX_ORIGINAL_NAME_LENGTH);
     const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const filename = `${clip.id}_${safeName}`;
     fs.writeFileSync(path.join(FILES_DIR, filename), buffer);
@@ -755,6 +1098,7 @@ app.post('/api/boards/:id/clips', (req, res) => {
     clip.mimeType = match[1].toLowerCase();
     clip.fileUrl = `/api/files/${filename}`;
     clip.previewUrl = `/api/files/${filename}/preview`;
+    storedBinaryBytes += buffer.length;
   } else if (type === 'text') {
     const text = String(content);
     assertWithinTextLimit(text);
@@ -768,7 +1112,9 @@ app.post('/api/boards/:id/clips', (req, res) => {
 });
 
 app.put('/api/boards/:boardId/clips/:clipId', (req, res) => {
-  const { boardId, clipId } = req.params;
+  const boardId = assertSafeId(req.params.boardId, 'board id');
+  const clipId = assertSafeId(req.params.clipId, 'clip id');
+  const body = assertBodyObject(req.body, ['content']);
   const boardClips = store.clips[boardId];
   if (!boardClips) return res.status(404).json({ error: 'Board not found' });
   const lockedBoard = store.boards.find(b => b.id === boardId);
@@ -778,7 +1124,8 @@ app.put('/api/boards/:boardId/clips/:clipId', (req, res) => {
   if (!clip) return res.status(404).json({ error: 'Clip not found' });
   if (clip.type !== 'text') return res.status(400).json({ error: 'Only text clips can be edited' });
 
-  const content = String(req.body.content ?? '');
+  if (typeof body.content !== 'string') throw httpError(400, 'content must be a string');
+  const content = body.content;
   if (!content.trim()) return res.status(400).json({ error: 'Content required' });
   assertWithinTextLimit(content);
 
@@ -790,12 +1137,14 @@ app.put('/api/boards/:boardId/clips/:clipId', (req, res) => {
 });
 
 app.delete('/api/boards/:boardId/clips/:clipId', (req, res) => {
-  const { boardId, clipId } = req.params;
+  const boardId = assertSafeId(req.params.boardId, 'board id');
+  const clipId = assertSafeId(req.params.clipId, 'clip id');
   if (!store.clips[boardId]) return res.status(404).json({ error: 'Board not found' });
   const lockedBoard = store.boards.find(b => b.id === boardId);
   if (lockedBoard && lockedBoard.locked) return res.status(403).json({ error: 'Board is locked' });
   const clip = store.clips[boardId].find(c => c.id === clipId);
   if (!clip) return res.status(404).json({ error: 'Clip not found' });
+  storedBinaryBytes = Math.max(0, storedBinaryBytes - clipDiskSize(clip));
   if (clip.type === 'image' && clip.filename) {
     try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
   }
@@ -854,7 +1203,7 @@ app.get('/api/files/:filename/preview', (req, res) => {
 // Link preview
 app.get('/api/link-preview', async (req, res) => {
   const url = req.query.url;
-  if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) {
+  if (typeof url !== 'string' || url.length > 2048 || !(url.startsWith('http://') || url.startsWith('https://'))) {
     return res.status(400).json({ error: 'Invalid URL' });
   }
   try {
@@ -902,52 +1251,167 @@ app.get('/api/link-preview', async (req, res) => {
 });
 
 // Error handler – silence expected client errors (aborted uploads, bad JSON, too large)
-app.use((err, _req, res, next) => {
+app.use((err, req, res, _next) => {
+  if (res.headersSent) {
+    req.socket.destroy();
+    return;
+  }
   if (err.type === 'entity.too.large') {
     return res.status(413).json({ error: createFileTooLargeError().message });
   }
-  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: err.message });
-  next(err);
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({ error: 'Invalid JSON', code: 'INVALID_JSON' });
+  }
+  if (err.expose && err.status >= 400 && err.status < 600) {
+    return res.status(err.status).json({ error: err.message, code: err.code || 'REQUEST_FAILED' });
+  }
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message, code: err.code || 'BAD_REQUEST' });
+  }
+  const requestId = req.requestId || crypto.randomUUID();
+  console.error(JSON.stringify({
+    level: 'error',
+    event: 'request_error',
+    requestId,
+    method: req.method,
+    path: req.path,
+    message: err?.message || 'Unknown error',
+  }));
+  return res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR', requestId });
 });
 
 // --- HTTP + WebSocket ---
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: MAX_WS_PAYLOAD_BYTES,
+  perMessageDeflate: false,
+});
 const clients = new Set();
 
-server.on('upgrade', (req, socket, head) => {
-  const address = clientAddress(req, TRUST_PROXY_FN);
-  if (!authResult(req).ok) {
-    const limitResult = authFailureLimiter.check(address);
-    if (!limitResult.ok) {
-      socket.write(`HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${limitResult.retryAfter}\r\nConnection: close\r\n\r\n`);
-      socket.destroy();
-      return;
-    }
-    socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="Wklejka"\r\nConnection: close\r\n\r\n');
-    socket.destroy();
-    return;
+function rejectUpgrade(socket, status, reason, extraHeaders = '') {
+  if (!socket.writable) return socket.destroy();
+  socket.end(
+    `HTTP/1.1 ${status} ${reason}\r\n`
+    + extraHeaders
+    + 'Connection: close\r\n'
+    + 'Content-Length: 0\r\n\r\n',
+  );
+}
+
+function websocketOriginAllowed(req) {
+  const originHeader = req.headers.origin;
+  if (originHeader === undefined) return WS_ALLOW_NO_ORIGIN;
+  if (typeof originHeader !== 'string' || originHeader.length > 512) return false;
+
+  let origin;
+  try {
+    const parsed = new URL(originHeader);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin === 'null') return false;
+    origin = parsed.origin;
+  } catch {
+    return false;
   }
 
-  authFailureLimiter.reset(address);
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit('connection', ws, req);
-  });
+  if (CONFIGURED_PUBLIC_ORIGINS.size) return CONFIGURED_PUBLIC_ORIGINS.has(origin);
+
+  const host = safeHostHeader(req.headers.host);
+  if (!host) return false;
+  const forwardedProto = TRUST_PROXY !== false && typeof req.headers['x-forwarded-proto'] === 'string'
+    ? req.headers['x-forwarded-proto'].split(',')[0].trim().toLowerCase()
+    : '';
+  const protocol = forwardedProto === 'https' || req.socket.encrypted ? 'https' : 'http';
+  return origin === `${protocol}://${host}`;
+}
+
+server.on('upgrade', (req, socket, head) => {
+  try {
+    const requestUrl = safeRequestUrl(req);
+    if (!requestUrl) return rejectUpgrade(socket, 400, 'Bad Request');
+    if (requestUrl.pathname !== '/ws') return rejectUpgrade(socket, 404, 'Not Found');
+    if (!safeHostHeader(req.headers.host)) return rejectUpgrade(socket, 400, 'Bad Request');
+    if (!websocketOriginAllowed(req)) return rejectUpgrade(socket, 403, 'Forbidden');
+    if (clients.size >= MAX_WS_CLIENTS) {
+      return rejectUpgrade(socket, 503, 'Service Unavailable', 'Retry-After: 5\r\n');
+    }
+
+    const address = clientAddress(req, TRUST_PROXY_FN);
+    if (!authResult(req).ok) {
+      const limitResult = authFailureLimiter.check(address);
+      if (!limitResult.ok) {
+        return rejectUpgrade(
+          socket,
+          429,
+          'Too Many Requests',
+          `Retry-After: ${limitResult.retryAfter}\r\n`,
+        );
+      }
+      return rejectUpgrade(
+        socket,
+        401,
+        'Unauthorized',
+        'WWW-Authenticate: Basic realm="Wklejka"\r\n',
+      );
+    }
+
+    authFailureLimiter.reset(address);
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'warn',
+      event: 'websocket_upgrade_rejected',
+      message: error?.message || 'Unknown error',
+    }));
+    rejectUpgrade(socket, 400, 'Bad Request');
+  }
 });
 
 wss.on('connection', (ws) => {
+  ws.isAlive = true;
   clients.add(ws);
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', () => {
+    // The channel is server-push only. Ignore client frames deliberately.
+  });
   ws.on('close', () => clients.delete(ws));
-  ws.on('error', () => clients.delete(ws));
+  ws.on('error', () => {
+    clients.delete(ws);
+    ws.terminate();
+  });
 });
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
   for (const ws of clients) {
-    if (ws.readyState === 1) ws.send(msg);
+    if (ws.readyState !== 1) continue;
+    if (ws.bufferedAmount > MAX_WS_BACKPRESSURE_BYTES) {
+      clients.delete(ws);
+      ws.terminate();
+      continue;
+    }
+    ws.send(msg, (error) => {
+      if (!error) return;
+      clients.delete(ws);
+      ws.terminate();
+    });
   }
 }
+
+const websocketHeartbeat = setInterval(() => {
+  for (const ws of clients) {
+    if (!ws.isAlive) {
+      clients.delete(ws);
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { ws.terminate(); }
+  }
+}, WS_HEARTBEAT_MS);
+websocketHeartbeat.unref();
 
 // --- Expiry cleanup (every 60s) ---
 

@@ -40,6 +40,8 @@ const i18n = {
     file: 'Plik',
     attachFile: 'Za\u0142\u0105cz plik',
     uploading: 'Przesy\u0142anie...',
+    uploadFailed: 'Przesy\u0142anie nie powiod\u0142o si\u0119',
+    retry: 'Pon\u00f3w',
     payloadTooLarge: 'Plik jest za du\u017cy',
     payloadTooLargeWithLimit: 'Plik jest za du\u017cy (maks. {maxSize})',
     pastedImage: 'Wklejony obrazek',
@@ -78,6 +80,40 @@ const i18n = {
     link: 'Link',
     linkCopied: 'Skopiowano link',
     editError: 'Błąd edycji',
+    loading: 'Ładowanie…',
+    loadingClips: 'Ładowanie wpisów…',
+    offline: 'Brak połączenia z siecią',
+    syncError: 'Błąd synchronizacji',
+    realtimeReconnecting: 'Dane dostępne · łączenie realtime…',
+    retry: 'Ponów',
+    secureWarning: 'Połączenie nie jest szyfrowane. Kopiowanie, powiadomienia i instalacja aplikacji mogą być niedostępne. Otwórz Wklejkę przez HTTPS.',
+    notificationsEnable: 'Włącz powiadomienia',
+    notificationsOn: 'Powiadomienia włączone',
+    notificationsBlocked: 'Powiadomienia zablokowane',
+    typeFilter: 'Typ',
+    typeAll: 'Wszystkie',
+    typeImages: 'Obrazki',
+    typeFiles: 'Pliki',
+    results: '{visible} z {total}',
+    boardMenu: 'Zarządzaj kartą {name}',
+    manageBoard: 'Zarządzaj kartą: {name}',
+    saveName: 'Zapisz nazwę',
+    close: 'Zamknij',
+    moveLeft: 'W lewo',
+    moveRight: 'W prawo',
+    moveGroup: 'Zmień pozycję karty',
+    lockedBadge: 'Chroniona przed zmianami',
+    previewLoad: 'Pokaż podgląd linku',
+    previewPrivacy: 'Podgląd pobierze dane wskazanej strony',
+    previewFailed: 'Nie udało się pobrać podglądu',
+    openImage: 'Otwórz obraz w nowej karcie',
+    loadPreview: 'Wczytaj podgląd pliku',
+    newClipAnnounce: 'Nowy wpis w karcie {boardName}',
+    copyFallback: 'Skopiuj tekst z pola poniżej:',
+    boardUpdateError: 'Nie udało się zmienić karty',
+    boardDeleteError: 'Nie udało się usunąć karty',
+    addClip: 'Dodaj wpis',
+    clipsLabel: 'Wpisy',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -109,6 +145,8 @@ const i18n = {
     file: 'File',
     attachFile: 'Attach file',
     uploading: 'Uploading...',
+    uploadFailed: 'Upload failed',
+    retry: 'Retry',
     payloadTooLarge: 'File is too large',
     payloadTooLargeWithLimit: 'File is too large (max {maxSize})',
     pastedImage: 'Pasted image',
@@ -147,6 +185,40 @@ const i18n = {
     link: 'Link',
     linkCopied: 'Link copied',
     editError: 'Edit failed',
+    loading: 'Loading…',
+    loadingClips: 'Loading clips…',
+    offline: 'No network connection',
+    syncError: 'Sync failed',
+    realtimeReconnecting: 'Data available · reconnecting realtime…',
+    retry: 'Retry',
+    secureWarning: 'This connection is not encrypted. Copying, notifications, and app installation may be unavailable. Open Wklejka over HTTPS.',
+    notificationsEnable: 'Enable notifications',
+    notificationsOn: 'Notifications enabled',
+    notificationsBlocked: 'Notifications blocked',
+    typeFilter: 'Type',
+    typeAll: 'All',
+    typeImages: 'Images',
+    typeFiles: 'Files',
+    results: '{visible} of {total}',
+    boardMenu: 'Manage tab {name}',
+    manageBoard: 'Manage tab: {name}',
+    saveName: 'Save name',
+    close: 'Close',
+    moveLeft: 'Move left',
+    moveRight: 'Move right',
+    moveGroup: 'Change tab position',
+    lockedBadge: 'Protected from changes',
+    previewLoad: 'Show link preview',
+    previewPrivacy: 'Preview will fetch data from the linked website',
+    previewFailed: 'Could not load preview',
+    openImage: 'Open image in a new tab',
+    loadPreview: 'Load file preview',
+    newClipAnnounce: 'New clip in tab {boardName}',
+    copyFallback: 'Copy the text from the field below:',
+    boardUpdateError: 'Could not update tab',
+    boardDeleteError: 'Could not delete tab',
+    addClip: 'Add clip',
+    clipsLabel: 'Clips',
   }
 };
 
@@ -267,6 +339,58 @@ let renderedBoardIds = new Set();
 const linkPreviewCache = new Map();
 let searchQuery = '';
 let focusedClipHash = '';
+const DRAFTS_STORAGE_KEY = 'wklejka-drafts-v1';
+const uploadTasks = new Map();
+let filePickerBoardId = null;
+
+function readDrafts() {
+  try {
+    const value = JSON.parse(localStorage.getItem(DRAFTS_STORAGE_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+let drafts = readDrafts();
+
+function draftFor(boardId) {
+  return typeof drafts[boardId] === 'string' ? drafts[boardId] : '';
+}
+
+function saveDraft(boardId, value) {
+  if (!boardId) return;
+  if (value) drafts[boardId] = value;
+  else delete drafts[boardId];
+  try {
+    localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(drafts));
+  } catch {
+    // A draft remaining in memory is still preferable to clearing the editor.
+  }
+}
+
+function restoreDraft(boardId) {
+  const textarea = $('#text-input');
+  textarea.value = draftFor(boardId);
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 300) + 'px';
+}
+
+function selectBoard(boardId, { clearHash = true } = {}) {
+  if (!boardId || boardId === currentBoardId) return false;
+  saveDraft(currentBoardId, $('#text-input').value);
+  currentBoardId = boardId;
+  restoreDraft(boardId);
+  renderUploads();
+  if (clearHash && location.hash.startsWith('#clip=')) {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  unreadCounts[boardId] = 0;
+  updateTitle();
+  renderTabs();
+  loadClips(boardId);
+  return true;
+}
 
 // --- API helpers ---
 
@@ -302,11 +426,16 @@ async function api(method, path, body) {
   return res.json();
 }
 
-function apiWithProgress(method, path, body, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open(method, '/api' + path);
-    xhr.setRequestHeader('Content-Type', 'application/json');
+function uploadRequest(task, onProgress) {
+  let xhr;
+  const promise = new Promise((resolve, reject) => {
+    xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/boards/' + encodeURIComponent(task.boardId) + '/uploads');
+    xhr.setRequestHeader('Content-Type', task.blob.type || 'application/octet-stream');
+    xhr.setRequestHeader('X-Clip-Type', task.type);
+    if (task.originalName) {
+      xhr.setRequestHeader('X-Original-Name', encodeURIComponent(task.originalName));
+    }
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
     };
@@ -323,10 +452,11 @@ function apiWithProgress(method, path, body, onProgress) {
       const message = parsed?.error || parsed?.message || xhr.responseText.trim();
       reject(new Error(normalizeApiErrorMessage(xhr.status, xhr.statusText, message)));
     };
-    xhr.onerror = () => reject(new Error('Network error'));
-    xhr.onabort = () => reject(new Error('Request aborted'));
-    xhr.send(JSON.stringify(body));
+    xhr.onerror = () => reject(new Error(lang === 'pl' ? 'Błąd sieci' : 'Network error'));
+    xhr.onabort = () => reject(Object.assign(new Error(lang === 'pl' ? 'Anulowano' : 'Cancelled'), { aborted: true }));
+    xhr.send(task.blob);
   });
+  return { promise, abort: () => xhr?.abort() };
 }
 
 function stripTokenFromUrl() {
@@ -354,6 +484,8 @@ async function loadBoards() {
   }
   renderedBoardIds = new Set(boards.map(b => b.id));
   renderTabs();
+  restoreDraft(currentBoardId);
+  renderUploads();
 }
 
 async function loadClips(boardId = currentBoardId) {
@@ -397,24 +529,12 @@ function syncAfterResume() {
   syncFromServer();
 }
 
-async function sendClip(type, content, originalName, options = {}) {
-  const ghostId = options.ghostId || ('ghost-' + Date.now() + Math.random().toString(36).substr(2, 5));
-  const hasGhost = type !== 'text';
-  if (hasGhost && !options.ghostId) {
-    showGhost(ghostId, originalName || (type === 'image' ? t('image') : t('file')));
-  }
+async function sendClip(boardId, type, content, originalName) {
   try {
     const body = { type, content };
     if (originalName) body.originalName = originalName;
-    const clip = hasGhost
-      ? await apiWithProgress('POST', '/boards/' + currentBoardId + '/clips', body, (progress) => {
-        const base = options.baseProgress || 0;
-        const span = 100 - base;
-        updateGhostProgress(ghostId, base + progress * span);
-      })
-      : await api('POST', '/boards/' + currentBoardId + '/clips', body);
-    removeGhost(ghostId);
-    if (!clips.find(c => c.id === clip.id)) {
+    const clip = await api('POST', '/boards/' + encodeURIComponent(boardId) + '/clips', body);
+    if (boardId === currentBoardId && !clips.find(c => c.id === clip.id)) {
       clips.unshift(clip);
       clipStateVersion++;
       if (searchQuery && !clipMatchesSearch(clip, searchQuery)) {
@@ -423,74 +543,125 @@ async function sendClip(type, content, originalName, options = {}) {
         insertClipAnimated(clip);
       }
     }
+    return clip;
   } catch (e) {
-    removeGhost(ghostId);
     showToast(t('sendError', { message: e.message }));
+    throw e;
   }
 }
 
-function showGhost(ghostId, label) {
-  const container = $('#uploading');
+function createUploadElement(task) {
   const el = document.createElement('div');
   el.className = 'clip clip-uploading';
-  el.id = ghostId;
+  el.dataset.uploadId = task.id;
   const header = document.createElement('div');
   header.className = 'clip-header';
   const name = document.createElement('span');
-  name.textContent = label;
-  const spinner = document.createElement('span');
-  spinner.className = 'spinner';
+  name.textContent = task.originalName || (task.type === 'image' ? t('image') : t('file'));
   header.appendChild(name);
-  header.appendChild(spinner);
+  if (task.status === 'uploading') {
+    const spinner = document.createElement('span');
+    spinner.className = 'spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    header.appendChild(spinner);
+  }
   el.appendChild(header);
   const body = document.createElement('div');
   body.className = 'clip-content uploading-label';
-  body.textContent = t('uploading');
+  body.textContent = task.status === 'error'
+    ? `${t('uploadFailed')}: ${task.error || ''}`
+    : `${t('uploading')} ${task.progress}%`;
   el.appendChild(body);
   const progress = document.createElement('div');
   progress.className = 'upload-progress';
   progress.setAttribute('role', 'progressbar');
   progress.setAttribute('aria-valuemin', '0');
   progress.setAttribute('aria-valuemax', '100');
+  progress.setAttribute('aria-valuenow', String(task.progress));
+  progress.setAttribute('aria-label', name.textContent);
   const bar = document.createElement('div');
   bar.className = 'upload-progress-bar';
+  bar.style.width = task.progress + '%';
   progress.appendChild(bar);
   el.appendChild(progress);
-  container.appendChild(el);
-  updateGhostProgress(ghostId, 0);
+  const actions = document.createElement('div');
+  actions.className = 'clip-actions';
+  if (task.status === 'error') {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = t('retry');
+    retry.addEventListener('click', () => startUpload(task));
+    actions.appendChild(retry);
+  }
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = t('cancel');
+  cancel.addEventListener('click', () => {
+    task.request?.abort();
+    uploadTasks.delete(task.id);
+    renderUploads();
+  });
+  actions.appendChild(cancel);
+  el.appendChild(actions);
+  return el;
 }
 
-function removeGhost(ghostId) {
-  const el = document.getElementById(ghostId);
-  if (el) el.remove();
+function renderUploads() {
+  const container = $('#uploading');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const task of uploadTasks.values()) {
+    if (task.boardId === currentBoardId) container.appendChild(createUploadElement(task));
+  }
 }
 
-function updateGhostProgress(ghostId, percent) {
-  const el = document.getElementById(ghostId);
-  if (!el) return;
-  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-  const bar = el.querySelector('.upload-progress-bar');
-  const progress = el.querySelector('.upload-progress');
-  const label = el.querySelector('.uploading-label');
-  if (bar) bar.style.width = clamped + '%';
-  if (progress) progress.setAttribute('aria-valuenow', String(clamped));
-  if (label) label.textContent = `${t('uploading')} ${clamped}%`;
+async function startUpload(task) {
+  task.status = 'uploading';
+  task.error = '';
+  task.progress = 0;
+  renderUploads();
+  const request = uploadRequest(task, (progress) => {
+    task.progress = Math.max(0, Math.min(100, Math.round(progress * 100)));
+    if (task.boardId === currentBoardId) renderUploads();
+  });
+  task.request = request;
+  try {
+    const clip = await request.promise;
+    if (!uploadTasks.has(task.id)) return;
+    uploadTasks.delete(task.id);
+    if (task.boardId === currentBoardId && !clips.some(item => item.id === clip.id)) {
+      clips.unshift(clip);
+      clipStateVersion++;
+      if (searchQuery && !clipMatchesSearch(clip, searchQuery)) renderClips();
+      else insertClipAnimated(clip);
+    }
+    renderUploads();
+  } catch (error) {
+    if (!uploadTasks.has(task.id) || error.aborted) return;
+    task.status = 'error';
+    task.error = error.message;
+    renderUploads();
+    showToast(t('sendError', { message: error.message }));
+  } finally {
+    task.request = null;
+  }
 }
 
-function uploadBlob(blob, type, originalName) {
-  const ghostId = 'ghost-' + Date.now() + Math.random().toString(36).substr(2, 5);
-  showGhost(ghostId, originalName || (type === 'image' ? t('image') : t('file')));
-
-  const reader = new FileReader();
-  reader.onprogress = (event) => {
-    if (event.lengthComputable) updateGhostProgress(ghostId, (event.loaded / event.total) * 35);
+function uploadBlob(blob, type, originalName, boardId = currentBoardId) {
+  if (!blob || !boardId) return;
+  const task = {
+    id: 'upload-' + Date.now() + Math.random().toString(36).slice(2, 7),
+    boardId,
+    blob,
+    type,
+    originalName: originalName || (type === 'image' ? t('pastedImage') : t('file')),
+    progress: 0,
+    status: 'uploading',
+    error: '',
+    request: null,
   };
-  reader.onload = () => sendClip(type, reader.result, originalName, { ghostId, baseProgress: 35 });
-  reader.onerror = () => {
-    removeGhost(ghostId);
-    showToast(t('sendError', { message: reader.error?.message || 'Read failed' }));
-  };
-  reader.readAsDataURL(blob);
+  uploadTasks.set(task.id, task);
+  startUpload(task);
 }
 
 function animateClipOut(el, callback) {
@@ -498,9 +669,10 @@ function animateClipOut(el, callback) {
   el.addEventListener('animationend', callback, { once: true });
 }
 
-async function deleteClip(clipId) {
+async function deleteClip(boardId, clipId) {
   try {
-    await api('DELETE', '/boards/' + currentBoardId + '/clips/' + clipId);
+    await api('DELETE', '/boards/' + encodeURIComponent(boardId) + '/clips/' + encodeURIComponent(clipId));
+    if (boardId !== currentBoardId) return;
     const el = document.querySelector(`.clip[data-id="${clipId}"]`);
     clips = clips.filter(c => c.id !== clipId);
     clipStateVersion++;
@@ -608,7 +780,7 @@ function renderLinkPreviews(content, text) {
 
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host);
+  ws = new WebSocket(proto + '//' + location.host + '/ws');
 
   ws.onopen = () => {
     $('#status').className = 'status online';
@@ -641,13 +813,7 @@ function connectWS() {
           const n = new Notification('Wklejka', { body, tag: 'wklejka-' + msg.boardId });
           n.onclick = () => {
             window.focus();
-            if (currentBoardId !== msg.boardId) {
-              currentBoardId = msg.boardId;
-              unreadCounts[msg.boardId] = 0;
-              updateTitle();
-              renderTabs();
-              loadClips();
-            }
+            selectBoard(msg.boardId);
             n.close();
           };
         }
@@ -696,8 +862,7 @@ function connectWS() {
         animateTabOut(msg.boardId, () => {
           boards = boards.filter(b => b.id !== msg.boardId);
           if (currentBoardId === msg.boardId) {
-            currentBoardId = 'default';
-            loadClips();
+            selectBoard('default', { clearHash: false });
           }
           renderTabs();
         });
@@ -842,15 +1007,7 @@ function renderTabs() {
     });
 
     btn.addEventListener('click', () => {
-      if (currentBoardId === board.id) return;
-      currentBoardId = board.id;
-      if (location.hash.startsWith('#clip=')) {
-        history.replaceState(null, '', location.pathname + location.search);
-      }
-      unreadCounts[board.id] = 0;
-      updateTitle();
-      renderTabs();
-      loadClips();
+      selectBoard(board.id);
     });
 
     nav.appendChild(btn);
@@ -884,10 +1041,6 @@ function boardTooltip(board) {
   const remaining = board.expiresAt - Date.now();
   if (remaining <= 0) return t('expiresIn', { time: t('justNow') });
   return t('expiresIn', { time: expiryLabel(remaining) });
-}
-
-function currentBoard() {
-  return boards.find(b => b.id === currentBoardId);
 }
 
 function clipMatchesSearch(clip, query) {
@@ -942,11 +1095,7 @@ function focusClipFromHash() {
   if (location.hash === focusedClipHash) return;
   if (target.boardId !== currentBoardId) {
     if (boards.some(board => board.id === target.boardId)) {
-      currentBoardId = target.boardId;
-      unreadCounts[target.boardId] = 0;
-      updateTitle();
-      renderTabs();
-      loadClips();
+      selectBoard(target.boardId, { clearHash: false });
     }
     return;
   }
@@ -960,7 +1109,7 @@ function focusClipFromHash() {
   });
 }
 
-function createClipElement(clip) {
+function createClipElement(clip, boardId = currentBoardId) {
   const el = document.createElement('div');
   el.className = 'clip';
   el.dataset.id = clip.id;
@@ -1062,7 +1211,7 @@ function createClipElement(clip) {
   // Actions
   const actions = document.createElement('div');
   actions.className = 'clip-actions';
-  const board = currentBoard();
+  const board = boards.find(item => item.id === boardId);
   const isLocked = !!board?.locked;
 
   if (clip.type !== 'file') {
@@ -1075,7 +1224,7 @@ function createClipElement(clip) {
   if (clip.type === 'text' && !isLocked) {
     const editBtn = document.createElement('button');
     editBtn.textContent = t('edit');
-    editBtn.addEventListener('click', () => startEditClip(clip, el));
+    editBtn.addEventListener('click', () => startEditClip(boardId, clip, el));
     actions.appendChild(editBtn);
   }
 
@@ -1088,7 +1237,7 @@ function createClipElement(clip) {
 
   const linkBtn = document.createElement('button');
   linkBtn.textContent = t('link');
-  linkBtn.addEventListener('click', () => copyClipLink(clip.id, linkBtn));
+  linkBtn.addEventListener('click', () => copyClipLink(boardId, clip.id, linkBtn));
   actions.appendChild(linkBtn);
 
   if (!isLocked) {
@@ -1099,7 +1248,7 @@ function createClipElement(clip) {
     delBtn.addEventListener('click', () => {
       if (delBtn.dataset.confirm) {
         clearTimeout(deleteConfirmTimeout);
-        deleteClip(clip.id);
+        deleteClip(boardId, clip.id);
         return;
       }
       delBtn.dataset.confirm = '1';
@@ -1136,7 +1285,7 @@ function renderClips() {
 
   container.innerHTML = '';
   nextClips.forEach(clip => {
-    container.appendChild(createClipElement(clip));
+    container.appendChild(createClipElement(clip, currentBoardId));
   });
   renderedClipIds = new Set(nextClips.map(c => c.id));
 }
@@ -1146,14 +1295,13 @@ function insertClipAnimated(clip) {
   const empty = container.querySelector('.empty-state');
   if (empty) empty.remove();
 
-  const el = createClipElement(clip);
+  const el = createClipElement(clip, currentBoardId);
   el.classList.add('clip-enter');
   container.prepend(el);
   renderedClipIds.add(clip.id);
 }
 
-function startEditClip(clip, el) {
-  const boardId = currentBoardId;
+function startEditClip(boardId, clip, el) {
   const content = el.querySelector('.clip-content');
   if (!content) return;
   content.innerHTML = '';
@@ -1213,9 +1361,9 @@ function startEditClip(clip, el) {
 
 // --- Clip actions ---
 
-async function copyClipLink(clipId, btn) {
+async function copyClipLink(boardId, clipId, btn) {
   try {
-    await navigator.clipboard.writeText(clipLink(currentBoardId, clipId));
+    await navigator.clipboard.writeText(clipLink(boardId, clipId));
     showToast(t('linkCopied'));
     if (btn) {
       clearTimeout(btn._linkTimeout);
@@ -1287,7 +1435,7 @@ document.addEventListener('paste', (e) => {
   if (imageItem) {
     e.preventDefault();
     const blob = imageItem.getAsFile();
-    uploadBlob(blob, 'image');
+    uploadBlob(blob, 'image', undefined, currentBoardId);
   }
   // Text paste in textarea: default behavior handles it
 });
@@ -1328,38 +1476,44 @@ document.addEventListener('drop', (e) => {
   dragCounter = 0;
   $('#drop-overlay').classList.remove('visible');
 
+  const boardId = currentBoardId;
   const files = Array.from(e.dataTransfer.files);
   files.forEach(file => {
     if (file.type.startsWith('image/')) {
-      uploadBlob(file, 'image', file.name);
+      uploadBlob(file, 'image', file.name, boardId);
     } else {
-      uploadBlob(file, 'file', file.name);
+      uploadBlob(file, 'file', file.name, boardId);
     }
   });
 });
 
 // Send text
-function sendText() {
+async function sendText() {
   const textarea = $('#text-input');
-  const text = textarea.value.trim();
-  if (!text) return;
-  sendClip('text', text);
-  textarea.value = '';
-  textarea.style.height = 'auto';
+  const boardId = currentBoardId;
+  const text = textarea.value;
+  if (!text.trim()) return;
+  saveDraft(boardId, text);
+  const sendButton = $('#send-btn');
+  sendButton.disabled = true;
+  try {
+    await sendClip(boardId, 'text', text);
+    if (draftFor(boardId) === text) saveDraft(boardId, '');
+    if (currentBoardId === boardId && textarea.value === text) {
+      textarea.value = '';
+      textarea.style.height = 'auto';
+    }
+  } catch {
+    // Keep the exact draft for retry, including leading and trailing whitespace.
+  } finally {
+    sendButton.disabled = false;
+  }
 }
 
 $('#text-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
     sendText();
-  }
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const ta = e.target;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    ta.value = ta.value.substring(0, start) + '\t' + ta.value.substring(end);
-    ta.selectionStart = ta.selectionEnd = start + 1;
   }
 });
 
@@ -1371,21 +1525,27 @@ $('#search-input').addEventListener('input', (event) => {
 });
 
 // File picker
-$('#file-btn').addEventListener('click', () => $('#file-input').click());
+$('#file-btn').addEventListener('click', () => {
+  filePickerBoardId = currentBoardId;
+  $('#file-input').click();
+});
 $('#file-input').addEventListener('change', (e) => {
+  const boardId = filePickerBoardId || currentBoardId;
   const files = Array.from(e.target.files);
   files.forEach(file => {
     if (file.type.startsWith('image/')) {
-      uploadBlob(file, 'image', file.name);
+      uploadBlob(file, 'image', file.name, boardId);
     } else {
-      uploadBlob(file, 'file', file.name);
+      uploadBlob(file, 'file', file.name, boardId);
     }
   });
+  filePickerBoardId = null;
   e.target.value = '';
 });
 
 // Auto-resize textarea
 $('#text-input').addEventListener('input', function () {
+  saveDraft(currentBoardId, this.value);
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 300) + 'px';
 });
