@@ -1,11 +1,20 @@
 services:
   wklejka:
     build: .
+    init: true
+    read_only: true
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     volumes:
       - wklejka-data:/app/data
     restart: unless-stopped
 
 volumes:
   wklejka-data:
+    name: wklejka-data
