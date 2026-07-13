@@ -79,6 +79,11 @@ jobs:
       - name: Run container
         run: |
           docker run -d --name app \
+            --init \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
             --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
             -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" \
             wklejka:test
@@ -275,6 +280,11 @@ jobs:
 
           docker rm -f app
           docker run -d --name app \
+            --init \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
             --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
             -e AUTH_TOKEN=secret \
             -e AUTH_RATE_LIMIT=2 \
@@ -308,6 +318,11 @@ jobs:
 
           docker rm -f app
           docker run -d --name app \
+            --init \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
             --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
             -e AUTH_TOKEN=secret \
             -e AUTH_RATE_LIMIT=1 \
