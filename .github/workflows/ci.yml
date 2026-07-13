@@ -217,6 +217,12 @@ jobs:
             -d "${DUPLICATE_REORDER_PAYLOAD}")
           [ "$HTTP_CODE" = "400" ] || { echo "Expected 400, got $HTTP_CODE"; exit 1; }
 
+          # Add a clip before locking so later operations can verify protection.
+          CLIP=$(curl -fsS -X POST "${base}/api/boards/${ID_A}/clips" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"text","content":"locked clip"}')
+          CLIP_ID=$(echo "$CLIP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
           # Lock board
           curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
             -H 'Content-Type: application/json' \
@@ -226,11 +232,12 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}")
           [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
 
-          # Add clip to locked board, then try to delete it (403)
-          CLIP=$(curl -fsS -X POST "${base}/api/boards/${ID_A}/clips" \
+          # Adding a new clip and deleting the existing one are both forbidden.
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${base}/api/boards/${ID_A}/clips" \
             -H 'Content-Type: application/json' \
-            -d '{"type":"text","content":"locked clip"}')
-          CLIP_ID=$(echo "$CLIP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            -d '{"type":"text","content":"must be rejected"}')
+          [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
+
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}/clips/${CLIP_ID}")
           [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
 
