@@ -85,7 +85,6 @@ const i18n = {
     offline: 'Brak połączenia z siecią',
     syncError: 'Błąd synchronizacji',
     realtimeReconnecting: 'Dane dostępne · łączenie realtime…',
-    retry: 'Ponów',
     secureWarning: 'Połączenie nie jest szyfrowane. Kopiowanie, powiadomienia i instalacja aplikacji mogą być niedostępne. Otwórz Wklejkę przez HTTPS.',
     notificationsEnable: 'Włącz powiadomienia',
     notificationsOn: 'Powiadomienia włączone',
@@ -114,6 +113,59 @@ const i18n = {
     boardDeleteError: 'Nie udało się usunąć karty',
     addClip: 'Dodaj wpis',
     clipsLabel: 'Wpisy',
+    loadMore: 'Wczytaj więcej',
+    loadedMore: 'Wczytano {count} kolejnych wpisów',
+    select: 'Zaznacz',
+    finishSelection: 'Zakończ zaznaczanie',
+    selectAllVisible: 'Zaznacz wszystkie wczytane',
+    selectedCount: 'Zaznaczono: {count}',
+    bulkDelete: 'Usuń zaznaczone',
+    bulkConfirm: 'Usunąć zaznaczone wpisy ({count})?',
+    bulkDeleted: 'Usunięto wpisy: {count}',
+    bulkError: 'Nie udało się usunąć zaznaczonych wpisów',
+    pinned: 'Przypięty',
+    pin: 'Przypnij',
+    unpin: 'Odepnij',
+    expiryAction: 'Wygasanie',
+    clipExpiryTitle: 'Wygasanie wpisu',
+    expiryCurrentNever: 'Ten wpis nie wygasa.',
+    share: 'Udostępnij',
+    shareTitle: 'Wpis z Wklejki',
+    shareDialogTitle: 'Udostępnij wpis',
+    shareDescription: 'Zeskanuj kod QR na innym urządzeniu albo skopiuj bezpośredni link.',
+    shareQrAlt: 'Kod QR prowadzący do tego wpisu',
+    shareQrLoading: 'Generowanie kodu QR…',
+    shareQrError: 'Nie udało się wczytać kodu QR.',
+    shareLinkLabel: 'Link do wpisu',
+    nativeShare: 'Udostępnij systemowo',
+    copyLink: 'Kopiuj link',
+    shareError: 'Nie udało się udostępnić linku',
+    storage: 'Pamięć',
+    storageTitle: 'Pamięć i konserwacja',
+    storageLoading: 'Ładowanie informacji o pamięci…',
+    storageUsed: 'Użyto {used} z {max} ({percent}%)',
+    boardsCount: 'Karty',
+    clipsCount: 'Wpisy',
+    connectionsCount: 'Połączenia realtime',
+    perBoardLimit: 'Limit wpisów na kartę',
+    totalLimit: 'Łączny limit wpisów',
+    refresh: 'Odśwież',
+    exportBackup: 'Eksportuj metadane',
+    exportNote: 'Eksport nie zawiera plików. Pełny backup wolumenu opisano w dokumentacji wdrożenia.',
+    cleanupTitle: 'Porządkowanie',
+    cleanupScope: 'Zakres',
+    currentBoardScope: 'Bieżąca karta',
+    allBoardsScope: 'Wszystkie karty',
+    olderThan: 'Starsze niż',
+    daysCount: '{count} dni',
+    cleanupPreview: 'Sprawdź, co zostanie usunięte',
+    cleanupPreviewResult: 'Do usunięcia: {count} elementów · możliwe do odzyskania: {bytes}',
+    cleanupBreakdown: 'Karty: {boards} · wpisy: {clips} · osierocone pliki: {orphans}',
+    cleanupConfirm: 'Potwierdź usunięcie',
+    cleanupConfirmPrompt: 'Trwale usunąć {count} elementów i odzyskać około {bytes}?',
+    cleanupDone: 'Usunięto {count} elementów · odzyskano {bytes}',
+    cleanupError: 'Nie udało się wykonać porządkowania',
+    statusError: 'Nie udało się pobrać informacji o pamięci',
   },
   en: {
     defaultBoard: 'Clipboard',
@@ -190,7 +242,6 @@ const i18n = {
     offline: 'No network connection',
     syncError: 'Sync failed',
     realtimeReconnecting: 'Data available · reconnecting realtime…',
-    retry: 'Retry',
     secureWarning: 'This connection is not encrypted. Copying, notifications, and app installation may be unavailable. Open Wklejka over HTTPS.',
     notificationsEnable: 'Enable notifications',
     notificationsOn: 'Notifications enabled',
@@ -219,6 +270,59 @@ const i18n = {
     boardDeleteError: 'Could not delete tab',
     addClip: 'Add clip',
     clipsLabel: 'Clips',
+    loadMore: 'Load more',
+    loadedMore: 'Loaded {count} more clips',
+    select: 'Select',
+    finishSelection: 'Finish selecting',
+    selectAllVisible: 'Select all loaded clips',
+    selectedCount: 'Selected: {count}',
+    bulkDelete: 'Delete selected',
+    bulkConfirm: 'Delete the selected clips ({count})?',
+    bulkDeleted: 'Deleted clips: {count}',
+    bulkError: 'Could not delete selected clips',
+    pinned: 'Pinned',
+    pin: 'Pin',
+    unpin: 'Unpin',
+    expiryAction: 'Expiry',
+    clipExpiryTitle: 'Clip expiry',
+    expiryCurrentNever: 'This clip does not expire.',
+    share: 'Share',
+    shareTitle: 'Wklejka clip',
+    shareDialogTitle: 'Share clip',
+    shareDescription: 'Scan the QR code on another device or copy the direct link.',
+    shareQrAlt: 'QR code linking to this clip',
+    shareQrLoading: 'Generating QR code…',
+    shareQrError: 'Could not load the QR code.',
+    shareLinkLabel: 'Clip link',
+    nativeShare: 'Share with device',
+    copyLink: 'Copy link',
+    shareError: 'Could not share the link',
+    storage: 'Storage',
+    storageTitle: 'Storage and maintenance',
+    storageLoading: 'Loading storage information…',
+    storageUsed: 'Used {used} of {max} ({percent}%)',
+    boardsCount: 'Boards',
+    clipsCount: 'Clips',
+    connectionsCount: 'Realtime connections',
+    perBoardLimit: 'Clip limit per board',
+    totalLimit: 'Total clip limit',
+    refresh: 'Refresh',
+    exportBackup: 'Export metadata',
+    exportNote: 'The export does not include files. A full volume backup is described in the deployment documentation.',
+    cleanupTitle: 'Cleanup',
+    cleanupScope: 'Scope',
+    currentBoardScope: 'Current board',
+    allBoardsScope: 'All boards',
+    olderThan: 'Older than',
+    daysCount: '{count} days',
+    cleanupPreview: 'Check what will be deleted',
+    cleanupPreviewResult: 'To delete: {count} items · potentially reclaim: {bytes}',
+    cleanupBreakdown: 'Boards: {boards} · clips: {clips} · orphan files: {orphans}',
+    cleanupConfirm: 'Confirm deletion',
+    cleanupConfirmPrompt: 'Permanently delete {count} items and reclaim about {bytes}?',
+    cleanupDone: 'Deleted {count} items · reclaimed {bytes}',
+    cleanupError: 'Cleanup failed',
+    statusError: 'Could not load storage information',
   }
 };
 
@@ -295,6 +399,44 @@ function updateStaticTexts() {
   $('.move-actions').setAttribute('aria-label', t('moveGroup'));
   $('#manage-delete').textContent = t('deleteTab');
   $('#manage-close').textContent = t('close');
+  $('#selection-toggle').textContent = t('select');
+  $('#select-all-label').textContent = t('selectAllVisible');
+  $('#bulk-delete').textContent = t('bulkDelete');
+  $('#selection-cancel').textContent = t('cancel');
+  $('#load-more').textContent = t('loadMore');
+  $('#clip-expiry-title').textContent = t('clipExpiryTitle');
+  $('#clip-expiry-label').textContent = t('expiresLabel');
+  $('#clip-expiry-cancel').textContent = t('cancel');
+  $('#clip-expiry-save').textContent = t('save');
+  const expiry = $('#clip-expiry-value');
+  expiry.options[0].textContent = t('expiresNever');
+  expiry.options[1].textContent = t('expires1h');
+  expiry.options[2].textContent = t('expires24h');
+  expiry.options[3].textContent = t('expires7d');
+  expiry.options[4].textContent = t('expires30d');
+  $('#share-title').textContent = t('shareDialogTitle');
+  $('#share-description').textContent = t('shareDescription');
+  $('#share-qr').alt = t('shareQrAlt');
+  $('#share-link-label').textContent = t('shareLinkLabel');
+  $('#share-native').textContent = t('nativeShare');
+  $('#share-copy').textContent = t('copyLink');
+  $('#share-close').textContent = t('close');
+  $('#storage-btn').textContent = t('storage');
+  $('#storage-title').textContent = t('storageTitle');
+  $('#storage-refresh').textContent = t('refresh');
+  $('#storage-export').textContent = t('exportBackup');
+  $('#storage-backup-note').textContent = t('exportNote');
+  $('#cleanup-title').textContent = t('cleanupTitle');
+  $('#cleanup-scope-label').textContent = t('cleanupScope');
+  $('#cleanup-scope').options[0].textContent = t('currentBoardScope');
+  $('#cleanup-scope').options[1].textContent = t('allBoardsScope');
+  $('#cleanup-age-label').textContent = t('olderThan');
+  $('#cleanup-age').options[0].textContent = t('daysCount', { count: 7 });
+  $('#cleanup-age').options[1].textContent = t('daysCount', { count: 30 });
+  $('#cleanup-age').options[2].textContent = t('daysCount', { count: 90 });
+  $('#cleanup-preview').textContent = t('cleanupPreview');
+  $('#cleanup-confirm').textContent = t('cleanupConfirm');
+  $('#storage-close').textContent = t('close');
 }
 
 // --- Dark mode ---
@@ -363,7 +505,20 @@ let clipTypeFilter = 'all';
 let wsReconnectTimer = null;
 let manageBoardId = null;
 let initialClipsLoaded = false;
+const CLIPS_PAGE_SIZE = 50;
+let nextClipsCursor = null;
+let totalClips = 0;
+let clipsLoadingMore = false;
+let searchDebounceTimer = null;
+let wsReconcileTimer = null;
+let selectionMode = false;
+const selectedClipIds = new Set();
+let bulkDeleteLimit = 100;
+let expiryClipContext = null;
+let shareClipContext = null;
+let cleanupPreviewState = null;
 const dialogOpeners = new WeakMap();
+const dialogFocusFallbacks = new WeakMap();
 const connectionState = {
   api: 'loading',
   ws: 'connecting',
@@ -408,8 +563,13 @@ function restoreDraft(boardId) {
 
 function selectBoard(boardId, { clearHash = true } = {}) {
   if (!boardId || boardId === currentBoardId) return false;
+  clearTimeout(searchDebounceTimer);
   saveDraft(currentBoardId, $('#text-input').value);
+  setSelectionMode(false);
   currentBoardId = boardId;
+  clips = [];
+  totalClips = 0;
+  nextClipsCursor = null;
   restoreDraft(boardId);
   renderUploads();
   if (clearHash && location.hash.startsWith('#clip=')) {
@@ -509,6 +669,11 @@ function renderBoardSummary() {
   $('#text-input').placeholder = locked ? t('boardLocked') : t('placeholder');
   $('#send-btn').disabled = locked;
   $('#file-btn').disabled = locked;
+  if (locked && selectionMode) {
+    selectionMode = false;
+    selectedClipIds.clear();
+  }
+  renderSelectionControls();
   const badges = $('#board-badges');
   badges.innerHTML = '';
   if (locked) {
@@ -554,7 +719,9 @@ async function api(method, path, body) {
       } else {
         message = (await res.text()).trim();
       }
-    } catch {}
+    } catch {
+      // Keep the HTTP status fallback when an error response cannot be parsed.
+    }
     throw new Error(normalizeApiErrorMessage(res.status, res.statusText, message));
   }
   return res.json();
@@ -577,7 +744,11 @@ function uploadRequest(task, onProgress) {
       const contentType = xhr.getResponseHeader('content-type') || '';
       let parsed = null;
       if (contentType.includes('application/json') && xhr.responseText) {
-        try { parsed = JSON.parse(xhr.responseText); } catch {}
+        try {
+          parsed = JSON.parse(xhr.responseText);
+        } catch {
+          // A non-JSON upload error is handled from the raw response below.
+        }
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(parsed);
@@ -623,26 +794,97 @@ async function loadBoards() {
   renderUploads();
 }
 
-async function loadClips(boardId = currentBoardId) {
+function clipsQueryKey(boardId = currentBoardId) {
+  return `${boardId}\n${searchQuery}\n${clipTypeFilter}`;
+}
+
+function clipsRequestPath(boardId, cursor = null) {
+  const params = new URLSearchParams({ limit: String(CLIPS_PAGE_SIZE) });
+  if (cursor) params.set('cursor', cursor);
+  if (searchQuery) params.set('q', searchQuery);
+  if (clipTypeFilter !== 'all') params.set('type', clipTypeFilter);
+  return '/boards/' + encodeURIComponent(boardId) + '/clips?' + params.toString();
+}
+
+function renderPagination() {
+  const button = $('#load-more');
+  button.textContent = clipsLoadingMore ? t('loading') : t('loadMore');
+  button.disabled = clipsLoadingMore;
+  button.hidden = !nextClipsCursor && !clipsLoadingMore;
+}
+
+async function loadClips(boardId = currentBoardId, { append = false } = {}) {
   const requestId = ++loadClipsRequestId;
   const version = clipStateVersion;
+  const cursor = append ? nextClipsCursor : null;
+  if (append && !cursor) return 0;
+  if (!append) {
+    clips = [];
+    totalClips = 0;
+    nextClipsCursor = null;
+    selectionMode = false;
+    selectedClipIds.clear();
+  }
+  const queryKey = clipsQueryKey(boardId);
   const container = $('#clips');
   container.setAttribute('aria-busy', 'true');
-  if (boardId === currentBoardId) {
+  clipsLoadingMore = append;
+  renderPagination();
+  if (!append && boardId === currentBoardId) {
     const loading = document.createElement('li');
     loading.className = 'empty-state';
     loading.textContent = t('loadingClips');
     container.replaceChildren(loading);
   }
-  const nextClips = await api('GET', '/boards/' + encodeURIComponent(boardId) + '/clips');
-  if (requestId !== loadClipsRequestId || boardId !== currentBoardId) return;
-  if (version !== clipStateVersion) return loadClips(boardId);
-  clips = nextClips;
-  initialClipsLoaded = true;
+  try {
+    const page = await api('GET', clipsRequestPath(boardId, cursor));
+    if (requestId !== loadClipsRequestId || boardId !== currentBoardId || queryKey !== clipsQueryKey(boardId)) return 0;
+    if (version !== clipStateVersion) return loadClips(boardId, { append: false });
+    if (!page || !Array.isArray(page.items)) throw new Error(t('syncError'));
+    const existingIds = new Set(append ? clips.map(clip => clip.id) : []);
+    const newItems = page.items.filter(clip => !existingIds.has(clip.id));
+    clips = append ? [...clips, ...newItems] : newItems;
+    nextClipsCursor = page.nextCursor || null;
+    totalClips = Number.isSafeInteger(page.total) ? page.total : clips.length;
+    initialClipsLoaded = true;
+    container.setAttribute('aria-busy', 'false');
+    renderedClipIds.clear();
+    renderClips();
+    focusClipFromHash();
+    if (append && newItems.length) announce(t('loadedMore', { count: newItems.length }));
+    return newItems.length;
+  } catch (error) {
+    if (!append && requestId === loadClipsRequestId && boardId === currentBoardId) {
+      renderClipLoadError(error.message);
+    }
+    throw error;
+  } finally {
+    if (requestId === loadClipsRequestId) {
+      clipsLoadingMore = false;
+      container.setAttribute('aria-busy', 'false');
+      renderPagination();
+    }
+  }
+}
+
+function renderClipLoadError(message) {
+  const container = $('#clips');
   container.setAttribute('aria-busy', 'false');
-  renderedClipIds.clear();
-  renderClips();
-  focusClipFromHash();
+  const item = document.createElement('li');
+  item.className = 'empty-state error-state';
+  const text = document.createElement('p');
+  text.textContent = message || t('syncError');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn btn-secondary';
+  retry.textContent = t('retry');
+  retry.addEventListener('click', () => {
+    loadClips(currentBoardId, { append: false }).catch(error => showToast(error.message));
+  });
+  item.append(text, retry);
+  container.replaceChildren(item);
+  nextClipsCursor = null;
+  renderPagination();
 }
 
 function renderSyncError(message) {
@@ -695,20 +937,32 @@ function syncAfterResume() {
   syncFromServer();
 }
 
+function addClipToCurrentQuery(clip) {
+  if (!clipMatchesActiveQuery(clip) || clips.some(item => item.id === clip.id)) return false;
+  clips.push(clip);
+  clips.sort(compareClipOrder);
+  totalClips++;
+  clipStateVersion++;
+  renderClips();
+  return true;
+}
+
+function scheduleClipsReconcile(delay = 120) {
+  clearTimeout(wsReconcileTimer);
+  wsReconcileTimer = setTimeout(() => {
+    if (!navigator.onLine) return;
+    loadClips(currentBoardId, { append: false }).catch(error => {
+      console.warn('Clip reconciliation failed:', error);
+    });
+  }, delay);
+}
+
 async function sendClip(boardId, type, content, originalName) {
   try {
     const body = { type, content };
     if (originalName) body.originalName = originalName;
     const clip = await api('POST', '/boards/' + encodeURIComponent(boardId) + '/clips', body);
-    if (boardId === currentBoardId && !clips.find(c => c.id === clip.id)) {
-      clips.unshift(clip);
-      clipStateVersion++;
-      if (searchQuery && !clipMatchesSearch(clip, searchQuery)) {
-        renderClips();
-      } else {
-        insertClipAnimated(clip);
-      }
-    }
+    if (boardId === currentBoardId) addClipToCurrentQuery(clip);
     return clip;
   } catch (e) {
     showToast(t('sendError', { message: e.message }));
@@ -795,12 +1049,7 @@ async function startUpload(task) {
     const clip = await request.promise;
     if (!uploadTasks.has(task.id)) return;
     uploadTasks.delete(task.id);
-    if (task.boardId === currentBoardId && !clips.some(item => item.id === clip.id)) {
-      clips.unshift(clip);
-      clipStateVersion++;
-      if (searchQuery && !clipMatchesSearch(clip, searchQuery)) renderClips();
-      else insertClipAnimated(clip);
-    }
+    if (task.boardId === currentBoardId) addClipToCurrentQuery(clip);
     renderUploads();
   } catch (error) {
     if (!uploadTasks.has(task.id) || error.aborted) return;
@@ -844,7 +1093,10 @@ async function deleteClip(boardId, clipId) {
     await api('DELETE', '/boards/' + encodeURIComponent(boardId) + '/clips/' + encodeURIComponent(clipId));
     if (boardId !== currentBoardId) return;
     const el = document.querySelector(`.clip[data-id="${clipId}"]`);
+    const wasLoaded = clips.some(clip => clip.id === clipId);
     clips = clips.filter(c => c.id !== clipId);
+    selectedClipIds.delete(clipId);
+    if (wasLoaded) totalClips = Math.max(0, totalClips - 1);
     clipStateVersion++;
     if (el) {
       animateClipOut(el, () => {
@@ -857,6 +1109,31 @@ async function deleteClip(boardId, clipId) {
     }
   } catch (e) {
     showToast(t('deleteError'));
+  }
+}
+
+async function updateClipMetadata(boardId, clipId, body, button) {
+  if (button) button.disabled = true;
+  try {
+    const updated = await api(
+      'PUT',
+      '/boards/' + encodeURIComponent(boardId) + '/clips/' + encodeURIComponent(clipId),
+      body,
+    );
+    if (boardId === currentBoardId) {
+      const index = clips.findIndex(clip => clip.id === clipId);
+      if (index !== -1) clips[index] = updated;
+      clips.sort(compareClipOrder);
+      clipStateVersion++;
+      renderClips();
+      if (body.pinned !== undefined) scheduleClipsReconcile();
+    }
+    return updated;
+  } catch (error) {
+    showToast(error.message || t('editError'));
+    throw error;
+  } finally {
+    if (button?.isConnected) button.disabled = false;
   }
 }
 
@@ -931,7 +1208,11 @@ function renderLinkPreviews(content, text) {
     button.textContent = t('previewLoad');
     button.title = t('previewPrivacy');
     let domainName = '';
-    try { domainName = new URL(url).hostname; } catch {}
+    try {
+      domainName = new URL(url).hostname;
+    } catch {
+      // The preview control remains useful without a hostname in its label.
+    }
     if (domainName) button.setAttribute('aria-label', `${t('previewLoad')}: ${domainName}. ${t('previewPrivacy')}`);
     control.appendChild(button);
     content.appendChild(control);
@@ -964,7 +1245,9 @@ function renderLinkPreviews(content, text) {
         domain.className = 'link-preview-domain';
         domain.textContent = new URL(url).hostname;
         info.appendChild(domain);
-      } catch {}
+      } catch {
+        // Omit the optional domain line if the URL cannot be parsed.
+      }
       card.appendChild(info);
         control.replaceWith(card);
       } catch (error) {
@@ -995,12 +1278,8 @@ function connectWS() {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     switch (msg.type) {
-      case 'clip-added':
-        if (msg.boardId === currentBoardId && !clips.find(c => c.id === msg.clip.id)) {
-          clips.unshift(msg.clip);
-          clipStateVersion++;
-          insertClipAnimated(msg.clip);
-        }
+      case 'clip-added': {
+        if (msg.boardId === currentBoardId) addClipToCurrentQuery(msg.clip);
         if (msg.boardId !== currentBoardId) {
           unreadCounts[msg.boardId] = (unreadCounts[msg.boardId] || 0) + 1;
           renderTabs();
@@ -1026,20 +1305,17 @@ function connectWS() {
           };
         }
         break;
+      }
       case 'clip-deleted':
         if (msg.boardId === currentBoardId) {
-          const clipEl = document.querySelector(`.clip[data-id="${msg.clipId}"]`);
+          const wasLoaded = clips.some(clip => clip.id === msg.clipId);
           clips = clips.filter(c => c.id !== msg.clipId);
+          selectedClipIds.delete(msg.clipId);
+          if (wasLoaded) totalClips = Math.max(0, totalClips - 1);
           clipStateVersion++;
-          if (clipEl) {
-            animateClipOut(clipEl, () => {
-              renderedClipIds.delete(msg.clipId);
-              renderClips();
-            });
-          } else {
-            renderedClipIds.delete(msg.clipId);
-            renderClips();
-          }
+          renderedClipIds.delete(msg.clipId);
+          renderClips();
+          if (!wasLoaded) scheduleClipsReconcile();
         }
         break;
       case 'clip-updated':
@@ -1047,10 +1323,11 @@ function connectWS() {
           const idx = clips.findIndex(c => c.id === msg.clip.id);
           if (idx !== -1) {
             clips[idx] = msg.clip;
-            clipStateVersion++;
-            renderClips();
-            focusClipFromHash();
           }
+          clipStateVersion++;
+          clips.sort(compareClipOrder);
+          renderClips();
+          scheduleClipsReconcile();
         }
         break;
       case 'board-added':
@@ -1232,21 +1509,25 @@ function boardTooltip(board) {
 function clipMatchesSearch(clip, query) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
-  const haystack = [
-    clip.type,
-    clip.content,
-    clip.originalName,
-    clip.mimeType,
-    clip.size ? formatSize(clip.size) : '',
-  ].filter(Boolean).join('\n').toLowerCase();
-  return haystack.includes(normalized);
+  return [clip.content, clip.originalName, clip.mimeType, clip.filename]
+    .some(value => typeof value === 'string' && value.toLowerCase().includes(normalized));
+}
+
+function clipMatchesActiveQuery(clip) {
+  return (clipTypeFilter === 'all' || clip.type === clipTypeFilter)
+    && clipMatchesSearch(clip, searchQuery);
+}
+
+function compareClipOrder(left, right) {
+  const pinnedDifference = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+  if (pinnedDifference) return pinnedDifference;
+  const timeDifference = Number(right.createdAt || 0) - Number(left.createdAt || 0);
+  if (timeDifference) return timeDifference;
+  return String(right.id).localeCompare(String(left.id));
 }
 
 function visibleClips() {
-  return clips.filter(clip => {
-    return (clipTypeFilter === 'all' || clip.type === clipTypeFilter)
-      && clipMatchesSearch(clip, searchQuery);
-  });
+  return clips;
 }
 
 function clipLink(boardId, clipId) {
@@ -1296,10 +1577,17 @@ function focusClipFromHash() {
     clipTypeFilter = 'all';
     $('#search-input').value = '';
     $('#type-filter').value = 'all';
-    renderClips();
+    loadClips(currentBoardId, { append: false }).catch(error => showToast(error.message));
+    return;
   }
   requestAnimationFrame(() => {
-    if (focusClipElement(target.clipId)) focusedClipHash = location.hash;
+    if (focusClipElement(target.clipId)) {
+      focusedClipHash = location.hash;
+    } else if (nextClipsCursor && !clipsLoadingMore) {
+      loadClips(currentBoardId, { append: true })
+        .then(() => focusClipFromHash())
+        .catch(error => showToast(error.message));
+    }
   });
 }
 
@@ -1335,24 +1623,94 @@ function appendLazyFilePreview(content, clip, extension, previewUrl) {
   content.appendChild(button);
 }
 
+function clipExpiryText(clip) {
+  if (!clip.expiresAt) return '';
+  const remaining = clip.expiresAt - Date.now();
+  return t('expiresIn', { time: remaining <= 0 ? t('justNow') : expiryLabel(remaining) });
+}
+
+function setSelectionMode(enabled) {
+  const locked = !!boards.find(board => board.id === currentBoardId)?.locked;
+  selectionMode = Boolean(enabled && !locked);
+  if (!selectionMode) selectedClipIds.clear();
+  renderClips();
+}
+
+function toggleClipSelection(clipId, selected) {
+  if (selected) selectedClipIds.add(clipId);
+  else selectedClipIds.delete(clipId);
+  const element = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
+  element?.classList.toggle('is-selected', selected);
+  renderSelectionControls();
+}
+
+function renderSelectionControls() {
+  const toolbar = $('#selection-toolbar');
+  const toggle = $('#selection-toggle');
+  const locked = !!boards.find(board => board.id === currentBoardId)?.locked;
+  const loadedIds = new Set(clips.map(clip => clip.id));
+  for (const id of selectedClipIds) {
+    if (!loadedIds.has(id)) selectedClipIds.delete(id);
+  }
+  toolbar.hidden = !selectionMode;
+  toggle.textContent = selectionMode ? t('finishSelection') : t('select');
+  toggle.disabled = locked || totalClips === 0;
+  $('#selected-count').textContent = t('selectedCount', { count: selectedClipIds.size });
+  $('#bulk-delete').disabled = !selectedClipIds.size;
+  const selectAll = $('#select-all-visible');
+  const allSelected = clips.length > 0 && clips.every(clip => selectedClipIds.has(clip.id));
+  const anySelected = clips.some(clip => selectedClipIds.has(clip.id));
+  selectAll.checked = allSelected;
+  selectAll.indeterminate = anySelected && !allSelected;
+  selectAll.disabled = !clips.length;
+}
+
 function createClipElement(clip, boardId = currentBoardId) {
   const el = document.createElement('li');
-  el.className = 'clip';
+  el.className = 'clip' + (selectedClipIds.has(clip.id) ? ' is-selected' : '');
   el.dataset.id = clip.id;
   const article = document.createElement('article');
 
   // Header
   const header = document.createElement('div');
   header.className = 'clip-header';
+  const meta = document.createElement('div');
+  meta.className = 'clip-meta';
+  if (selectionMode) {
+    const selectLabel = document.createElement('label');
+    selectLabel.className = 'clip-select-label';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'clip-select';
+    checkbox.checked = selectedClipIds.has(clip.id);
+    checkbox.setAttribute('aria-label', `${t('select')}: ${clip.originalName || clip.type}`);
+    checkbox.addEventListener('change', () => toggleClipSelection(clip.id, checkbox.checked));
+    selectLabel.appendChild(checkbox);
+    meta.appendChild(selectLabel);
+  }
   const typeLabel = document.createElement('span');
   const typeLabels = { image: t('image'), file: t('file'), text: t('text') };
   typeLabel.textContent = typeLabels[clip.type] || clip.type;
+  meta.appendChild(typeLabel);
+  if (clip.pinned) {
+    const pinned = document.createElement('span');
+    pinned.className = 'clip-badge pinned';
+    pinned.textContent = `📌 ${t('pinned')}`;
+    meta.appendChild(pinned);
+  }
+  if (clip.expiresAt) {
+    const expiry = document.createElement('span');
+    expiry.className = 'clip-badge';
+    expiry.dataset.expiryTs = clip.expiresAt;
+    expiry.textContent = clipExpiryText(clip);
+    meta.appendChild(expiry);
+  }
   const time = document.createElement('time');
   time.textContent = timeAgo(clip.createdAt);
   time.dataset.ts = clip.createdAt;
   time.dateTime = new Date(clip.createdAt).toISOString();
   article.setAttribute('aria-label', `${typeLabel.textContent}, ${time.textContent}`);
-  header.appendChild(typeLabel);
+  header.appendChild(meta);
   header.appendChild(time);
   article.appendChild(header);
 
@@ -1453,12 +1811,24 @@ function createClipElement(clip, boardId = currentBoardId) {
     actions.appendChild(dlBtn);
   }
 
-  const linkBtn = document.createElement('button');
-  linkBtn.textContent = t('link');
-  linkBtn.addEventListener('click', () => copyClipLink(boardId, clip.id, linkBtn));
-  actions.appendChild(linkBtn);
+  const shareBtn = document.createElement('button');
+  shareBtn.textContent = t('share');
+  shareBtn.dataset.action = 'share';
+  shareBtn.addEventListener('click', () => openShareModal(boardId, clip, shareBtn));
+  actions.appendChild(shareBtn);
 
   if (!isLocked) {
+    const pinBtn = document.createElement('button');
+    pinBtn.textContent = clip.pinned ? t('unpin') : t('pin');
+    pinBtn.addEventListener('click', () => updateClipMetadata(boardId, clip.id, { pinned: !clip.pinned }, pinBtn));
+    actions.appendChild(pinBtn);
+
+    const expiryBtn = document.createElement('button');
+    expiryBtn.textContent = t('expiryAction');
+    expiryBtn.dataset.action = 'expiry';
+    expiryBtn.addEventListener('click', () => openClipExpiryModal(boardId, clip, expiryBtn));
+    actions.appendChild(expiryBtn);
+
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-delete';
     delBtn.textContent = t('delete');
@@ -1490,22 +1860,15 @@ function renderClips() {
   const container = $('#clips');
   const nextClips = visibleClips();
   container.setAttribute('aria-busy', 'false');
-  $('#result-count').textContent = t('results', { visible: nextClips.length, total: clips.length });
+  $('#result-count').textContent = t('results', { visible: nextClips.length, total: totalClips });
+  renderSelectionControls();
+  renderPagination();
 
   if (!clips.length) {
     renderedClipIds.clear();
     const item = document.createElement('li');
     item.className = 'empty-state';
-    item.textContent = t('empty');
-    container.replaceChildren(item);
-    return;
-  }
-
-  if (!nextClips.length) {
-    renderedClipIds.clear();
-    const item = document.createElement('li');
-    item.className = 'empty-state';
-    item.textContent = t('noSearchResults');
+    item.textContent = searchQuery || clipTypeFilter !== 'all' ? t('noSearchResults') : t('empty');
     container.replaceChildren(item);
     return;
   }
@@ -1515,22 +1878,6 @@ function renderClips() {
     container.appendChild(createClipElement(clip, currentBoardId));
   });
   renderedClipIds = new Set(nextClips.map(c => c.id));
-}
-
-function insertClipAnimated(clip) {
-  if (!visibleClips().some(item => item.id === clip.id)) {
-    renderClips();
-    return;
-  }
-  const container = $('#clips');
-  const empty = container.querySelector('.empty-state');
-  if (empty) empty.remove();
-
-  const el = createClipElement(clip, currentBoardId);
-  el.classList.add('clip-enter');
-  container.prepend(el);
-  renderedClipIds.add(clip.id);
-  $('#result-count').textContent = t('results', { visible: visibleClips().length, total: clips.length });
 }
 
 function startEditClip(boardId, clip, el) {
@@ -1568,11 +1915,16 @@ function startEditClip(boardId, clip, el) {
     if (!nextContent.trim()) return;
     saveBtn.disabled = true;
     try {
-      const updated = await api('PUT', '/boards/' + boardId + '/clips/' + clip.id, { content: nextContent });
+      const updated = await api(
+        'PUT',
+        '/boards/' + encodeURIComponent(boardId) + '/clips/' + encodeURIComponent(clip.id),
+        { content: nextContent },
+      );
       const idx = clips.findIndex(c => c.id === updated.id);
       if (idx !== -1) clips[idx] = updated;
       clipStateVersion++;
       finish();
+      if (searchQuery) scheduleClipsReconcile();
     } catch {
       saveBtn.disabled = false;
       showToast(t('editError'));
@@ -1610,28 +1962,22 @@ async function copyText(text) {
   document.body.appendChild(field);
   field.select();
   let copied = false;
-  try { copied = document.execCommand('copy'); } catch {}
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    // The manual prompt below is the final copy fallback.
+  }
   field.remove();
   if (copied) return;
   window.prompt(t('copyFallback'), text);
 }
 
-async function copyClipLink(boardId, clipId, btn) {
-  try {
-    await copyText(clipLink(boardId, clipId));
-    showToast(t('linkCopied'));
-    if (btn) {
-      clearTimeout(btn._linkTimeout);
-      btn.textContent = '\u2713';
-      btn.classList.add('copy-success');
-      btn._linkTimeout = setTimeout(() => {
-        btn.textContent = t('link');
-        btn.classList.remove('copy-success');
-      }, 1500);
-    }
-  } catch {
-    showToast(t('copyFailed'));
-  }
+function clipSharePayload(clip, url) {
+  return {
+    title: t('shareTitle'),
+    text: clip.type === 'text' ? clip.content.slice(0, 180) : (clip.originalName || t(clip.type)),
+    url,
+  };
 }
 
 async function copyClip(clip, btn) {
@@ -1780,14 +2126,100 @@ $('#text-input').addEventListener('keydown', (e) => {
 
 $('#send-btn').addEventListener('click', sendText);
 
+function scheduleFilterReload(delay = 300) {
+  clearTimeout(searchDebounceTimer);
+  loadClipsRequestId++;
+  nextClipsCursor = null;
+  clipsLoadingMore = false;
+  selectionMode = false;
+  selectedClipIds.clear();
+  $('#clips').setAttribute('aria-busy', 'true');
+  $('#result-count').textContent = t('loading');
+  renderSelectionControls();
+  renderPagination();
+  searchDebounceTimer = setTimeout(() => {
+    loadClips(currentBoardId, { append: false }).catch(error => {
+      showToast(error.message || t('syncError'));
+      renderClips();
+    });
+  }, delay);
+}
+
 $('#search-input').addEventListener('input', (event) => {
   searchQuery = event.target.value.trim();
-  renderClips();
+  scheduleFilterReload();
 });
 
 $('#type-filter').addEventListener('change', (event) => {
   clipTypeFilter = event.target.value;
+  scheduleFilterReload(0);
+});
+
+$('#load-more').addEventListener('click', async () => {
+  const button = $('#load-more');
+  try {
+    await loadClips(currentBoardId, { append: true });
+  } catch (error) {
+    showToast(error.message || t('syncError'));
+    if (button.isConnected) button.focus();
+  }
+});
+
+$('#selection-toggle').addEventListener('click', () => setSelectionMode(!selectionMode));
+$('#selection-cancel').addEventListener('click', () => {
+  setSelectionMode(false);
+  $('#selection-toggle').focus();
+});
+
+$('#select-all-visible').addEventListener('change', (event) => {
+  for (const clip of clips) {
+    if (event.target.checked) selectedClipIds.add(clip.id);
+    else selectedClipIds.delete(clip.id);
+  }
   renderClips();
+});
+
+$('#bulk-delete').addEventListener('click', async () => {
+  const ids = Array.from(selectedClipIds);
+  if (!ids.length || !confirm(t('bulkConfirm', { count: ids.length }))) return;
+  const boardId = currentBoardId;
+  const button = $('#bulk-delete');
+  button.disabled = true;
+  let deleted = 0;
+  try {
+    try {
+      const status = await api('GET', '/status');
+      if (Number.isSafeInteger(status.limits?.maxBulkDelete) && status.limits.maxBulkDelete > 0) {
+        bulkDeleteLimit = status.limits.maxBulkDelete;
+      }
+    } catch {
+      // The conservative default still matches the server default.
+    }
+    for (let offset = 0; offset < ids.length; offset += bulkDeleteLimit) {
+      const batch = ids.slice(offset, offset + bulkDeleteLimit);
+      const result = await api(
+        'POST',
+        '/boards/' + encodeURIComponent(boardId) + '/clips/bulk-delete',
+        { ids: batch },
+      );
+      deleted += Number(result.deleted) || 0;
+    }
+    if (boardId === currentBoardId) {
+      selectionMode = false;
+      selectedClipIds.clear();
+      await loadClips(boardId, { append: false });
+      showToast(t('bulkDeleted', { count: deleted }));
+      $('#selection-toggle').focus();
+    }
+  } catch (error) {
+    if (boardId === currentBoardId) {
+      selectionMode = false;
+      selectedClipIds.clear();
+      await loadClips(boardId, { append: false }).catch(() => {});
+    }
+    const prefix = deleted ? `${t('bulkDeleted', { count: deleted })}. ` : '';
+    showToast(prefix + (error.message || t('bulkError')));
+  }
 });
 
 // File picker
@@ -1878,8 +2310,29 @@ function showToast(msg) {
 
 // --- New board modal ---
 
-function openDialog(dialog, initialFocus, opener = document.activeElement) {
+function dialogFocusTarget(dialog) {
+  const opener = dialogOpeners.get(dialog);
+  if (opener?.isConnected) return opener;
+  const fallback = dialogFocusFallbacks.get(dialog);
+  const fallbackTarget = typeof fallback === 'function' ? fallback() : fallback;
+  if (fallbackTarget?.isConnected) return fallbackTarget;
+  return document.querySelector('[role="tab"][aria-selected="true"], #selection-toggle, #add-board-btn');
+}
+
+function restoreDialogFocus(dialog) {
+  const restore = () => dialogFocusTarget(dialog)?.focus();
+  restore();
+  requestAnimationFrame(() => {
+    restore();
+    dialogOpeners.delete(dialog);
+    dialogFocusFallbacks.delete(dialog);
+  });
+}
+
+function openDialog(dialog, initialFocus, opener = document.activeElement, fallbackFocus = null) {
   dialogOpeners.set(dialog, opener instanceof HTMLElement ? opener : null);
+  if (fallbackFocus) dialogFocusFallbacks.set(dialog, fallbackFocus);
+  else dialogFocusFallbacks.delete(dialog);
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
   requestAnimationFrame(() => initialFocus?.focus());
@@ -1889,16 +2342,13 @@ function closeDialog(dialog) {
   if (dialog.open && typeof dialog.close === 'function') dialog.close();
   else {
     dialog.removeAttribute('open');
-    const opener = dialogOpeners.get(dialog);
-    if (opener?.isConnected) opener.focus();
+    restoreDialogFocus(dialog);
   }
 }
 
 function prepareDialog(dialog) {
   dialog.addEventListener('close', () => {
-    const opener = dialogOpeners.get(dialog);
-    dialogOpeners.delete(dialog);
-    if (opener?.isConnected) opener.focus();
+    restoreDialogFocus(dialog);
   });
   dialog.addEventListener('click', (event) => {
     if (event.target !== dialog) return;
@@ -2105,6 +2555,290 @@ $('#manage-delete').addEventListener('click', async () => {
   }
 });
 
+// --- Clip expiry modal ---
+
+function clipActionElement(boardId, clipId, action) {
+  if (boardId !== currentBoardId) return null;
+  const card = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
+  return card?.querySelector(`button[data-action="${action}"]`) || null;
+}
+
+function openClipExpiryModal(boardId, clip, opener) {
+  expiryClipContext = { boardId, clipId: clip.id };
+  $('#clip-expiry-current').textContent = clip.expiresAt ? clipExpiryText(clip) : t('expiryCurrentNever');
+  $('#clip-expiry-value').value = clip.expiresAt ? '86400000' : '';
+  openDialog(
+    $('#clip-expiry-modal'),
+    $('#clip-expiry-value'),
+    opener,
+    () => clipActionElement(boardId, clip.id, 'expiry'),
+  );
+}
+
+function closeClipExpiryModal() {
+  closeDialog($('#clip-expiry-modal'));
+}
+
+$('#clip-expiry-cancel').addEventListener('click', closeClipExpiryModal);
+$('#clip-expiry-modal').addEventListener('close', () => { expiryClipContext = null; });
+$('#clip-expiry-save').addEventListener('click', async () => {
+  if (!expiryClipContext) return;
+  const context = { ...expiryClipContext };
+  const value = $('#clip-expiry-value').value;
+  const button = $('#clip-expiry-save');
+  button.disabled = true;
+  try {
+    await updateClipMetadata(
+      context.boardId,
+      context.clipId,
+      value ? { expiresIn: Number(value) } : { expiresAt: null },
+    );
+    closeClipExpiryModal();
+  } catch {
+    // updateClipMetadata already reports the error and keeps the dialog open.
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// --- Share modal ---
+
+function openShareModal(boardId, clip, opener) {
+  const url = clipLink(boardId, clip.id);
+  const context = { boardId, clipId: clip.id, clip, url };
+  shareClipContext = context;
+  const dialog = $('#share-modal');
+  const image = $('#share-qr');
+  const frame = $('#share-qr-frame');
+  const status = $('#share-qr-status');
+  const nativeButton = $('#share-native');
+  const copyButton = $('#share-copy');
+
+  $('#share-link').value = url;
+  nativeButton.hidden = typeof navigator.share !== 'function';
+  nativeButton.disabled = false;
+  copyButton.disabled = false;
+  copyButton.textContent = t('copyLink');
+  image.hidden = true;
+  image.removeAttribute('src');
+  status.hidden = false;
+  status.textContent = t('shareQrLoading');
+  frame.setAttribute('aria-busy', 'true');
+
+  image.onload = () => {
+    if (shareClipContext !== context) return;
+    image.hidden = false;
+    status.hidden = true;
+    frame.setAttribute('aria-busy', 'false');
+  };
+  image.onerror = () => {
+    if (shareClipContext !== context) return;
+    image.hidden = true;
+    status.hidden = false;
+    status.textContent = t('shareQrError');
+    frame.setAttribute('aria-busy', 'false');
+  };
+
+  const params = new URLSearchParams({ boardId, clipId: clip.id, lang });
+  const initialFocus = nativeButton.hidden ? copyButton : nativeButton;
+  openDialog(
+    dialog,
+    initialFocus,
+    opener,
+    () => clipActionElement(boardId, clip.id, 'share'),
+  );
+  image.src = `/api/share/qr?${params}`;
+}
+
+function closeShareModal() {
+  closeDialog($('#share-modal'));
+}
+
+$('#share-link').addEventListener('focus', (event) => event.currentTarget.select());
+$('#share-close').addEventListener('click', closeShareModal);
+$('#share-modal').addEventListener('close', () => {
+  const image = $('#share-qr');
+  image.onload = null;
+  image.onerror = null;
+  image.removeAttribute('src');
+  image.hidden = true;
+  clearTimeout($('#share-copy')._copyTimeout);
+  shareClipContext = null;
+});
+
+$('#share-native').addEventListener('click', async () => {
+  const context = shareClipContext;
+  if (!context || typeof navigator.share !== 'function') return;
+  const button = $('#share-native');
+  button.disabled = true;
+  try {
+    await navigator.share(clipSharePayload(context.clip, context.url));
+    closeShareModal();
+  } catch (error) {
+    if (error.name !== 'AbortError') showToast(t('shareError'));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#share-copy').addEventListener('click', async () => {
+  const context = shareClipContext;
+  if (!context) return;
+  const button = $('#share-copy');
+  button.disabled = true;
+  try {
+    await copyText(context.url);
+    showToast(t('linkCopied'));
+    clearTimeout(button._copyTimeout);
+    button.textContent = `✓ ${t('copied')}`;
+    button._copyTimeout = setTimeout(() => { button.textContent = t('copyLink'); }, 1500);
+  } catch {
+    showToast(t('copyFailed'));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// --- Storage and maintenance modal ---
+
+function formatStorageSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(value / (1024 ** 3)).toFixed(2)} GB`;
+}
+
+function addStorageDetail(list, label, value) {
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = String(value);
+  list.append(term, description);
+}
+
+async function loadStorageStatus() {
+  const section = $('#storage-status');
+  const label = $('#storage-usage-label');
+  const refresh = $('#storage-refresh');
+  section.setAttribute('aria-busy', 'true');
+  label.textContent = t('storageLoading');
+  refresh.disabled = true;
+  try {
+    const status = await api('GET', '/status');
+    if (Number.isSafeInteger(status.limits?.maxBulkDelete) && status.limits.maxBulkDelete > 0) {
+      bulkDeleteLimit = status.limits.maxBulkDelete;
+    }
+    const used = Number(status.storage?.usedBytes) || 0;
+    const active = Number(status.storage?.activeUploadBytes) || 0;
+    const max = Math.max(1, Number(status.storage?.maxBytes) || 1);
+    const occupied = Math.min(max, used + active);
+    const percent = Math.min(100, Math.round((occupied / max) * 100));
+    const progress = $('#storage-progress');
+    progress.max = max;
+    progress.value = occupied;
+    label.textContent = t('storageUsed', {
+      used: formatStorageSize(occupied),
+      max: formatStorageSize(max),
+      percent,
+    });
+    const details = $('#storage-details');
+    details.replaceChildren();
+    addStorageDetail(details, t('boardsCount'), status.boards ?? 0);
+    addStorageDetail(details, t('clipsCount'), status.clips ?? 0);
+    addStorageDetail(details, t('connectionsCount'), status.websocketClients ?? 0);
+    addStorageDetail(details, t('perBoardLimit'), status.limits?.maxClipsPerBoard ?? '—');
+    addStorageDetail(details, t('totalLimit'), status.limits?.maxTotalClips ?? '—');
+  } catch (error) {
+    label.textContent = `${t('statusError')}: ${error.message}`;
+  } finally {
+    section.setAttribute('aria-busy', 'false');
+    refresh.disabled = false;
+  }
+}
+
+function resetCleanupPreview() {
+  cleanupPreviewState = null;
+  $('#cleanup-result').textContent = '';
+  $('#cleanup-confirm').hidden = true;
+}
+
+function cleanupRequestBody(dryRun) {
+  const age = Number($('#cleanup-age').value);
+  const body = { dryRun, olderThan: Date.now() - age };
+  if ($('#cleanup-scope').value === 'board') body.boardId = currentBoardId;
+  return body;
+}
+
+function cleanupCounts(result, dryRun) {
+  const source = dryRun ? result.matched : result.deleted;
+  const boards = Number(source?.boards) || 0;
+  const clipsCount = Number(source?.clips) || 0;
+  const orphans = Number(source?.orphans) || 0;
+  const count = boards + clipsCount + orphans;
+  const bytes = Number(result.reclaimedBytes) || 0;
+  return { count, bytes, boards, clips: clipsCount, orphans };
+}
+
+function openStorageModal(event) {
+  resetCleanupPreview();
+  openDialog($('#storage-modal'), $('#storage-refresh'), event?.currentTarget);
+  loadStorageStatus();
+}
+
+$('#storage-refresh').addEventListener('click', loadStorageStatus);
+$('#storage-close').addEventListener('click', () => closeDialog($('#storage-modal')));
+$('#cleanup-scope').addEventListener('change', resetCleanupPreview);
+$('#cleanup-age').addEventListener('change', resetCleanupPreview);
+
+$('#cleanup-preview').addEventListener('click', async () => {
+  const button = $('#cleanup-preview');
+  button.disabled = true;
+  resetCleanupPreview();
+  try {
+    const request = cleanupRequestBody(true);
+    const result = await api('POST', '/maintenance/cleanup', request);
+    const summary = cleanupCounts(result, true);
+    cleanupPreviewState = { request: { ...request, dryRun: false }, ...summary };
+    $('#cleanup-result').textContent = `${t('cleanupPreviewResult', {
+      count: summary.count,
+      bytes: formatStorageSize(summary.bytes),
+    })}. ${t('cleanupBreakdown', summary)}`;
+    $('#cleanup-confirm').hidden = summary.count === 0;
+  } catch (error) {
+    $('#cleanup-result').textContent = `${t('cleanupError')}: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#cleanup-confirm').addEventListener('click', async () => {
+  const preview = cleanupPreviewState;
+  if (!preview) return;
+  const message = t('cleanupConfirmPrompt', {
+    count: preview.count,
+    bytes: formatStorageSize(preview.bytes),
+  });
+  if (!confirm(message)) return;
+  const button = $('#cleanup-confirm');
+  button.disabled = true;
+  try {
+    const result = await api('POST', '/maintenance/cleanup', preview.request);
+    const summary = cleanupCounts(result, false);
+    $('#cleanup-result').textContent = `${t('cleanupDone', {
+      count: summary.count,
+      bytes: formatStorageSize(summary.bytes),
+    })}. ${t('cleanupBreakdown', summary)}`;
+    cleanupPreviewState = null;
+    button.hidden = true;
+    await loadStorageStatus();
+    scheduleClipsReconcile(0);
+  } catch (error) {
+    $('#cleanup-result').textContent = `${t('cleanupError')}: ${error.message}`;
+    button.disabled = false;
+  }
+});
+
 // --- Init ---
 
 stripTokenFromUrl();
@@ -2115,8 +2849,16 @@ showSecureContextWarning();
 updateNotificationButton();
 renderConnectionStatus();
 
-[$('#new-board-modal'), $('#unlock-modal'), $('#manage-board-modal')].forEach(prepareDialog);
+[
+  $('#new-board-modal'),
+  $('#unlock-modal'),
+  $('#manage-board-modal'),
+  $('#clip-expiry-modal'),
+  $('#share-modal'),
+  $('#storage-modal'),
+].forEach(prepareDialog);
 $('#add-board-btn').addEventListener('click', openNewBoardModal);
+$('#storage-btn').addEventListener('click', openStorageModal);
 $('#retry-btn').addEventListener('click', () => {
   if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();
   ws = null;
@@ -2126,7 +2868,11 @@ $('#retry-btn').addEventListener('click', () => {
 });
 $('#notification-btn').addEventListener('click', async () => {
   if (!('Notification' in window) || Notification.permission !== 'default') return;
-  try { await Notification.requestPermission(); } catch {}
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // The browser may reject permission prompts without changing state.
+  }
   updateNotificationButton();
 });
 
@@ -2162,6 +2908,10 @@ window.addEventListener('hashchange', () => {
 setInterval(() => {
   document.querySelectorAll('[data-ts]').forEach(el => {
     el.textContent = timeAgo(Number(el.dataset.ts));
+  });
+  document.querySelectorAll('[data-expiry-ts]').forEach(el => {
+    const remaining = Number(el.dataset.expiryTs) - Date.now();
+    el.textContent = t('expiresIn', { time: remaining <= 0 ? t('justNow') : expiryLabel(remaining) });
   });
 }, 30000);
 

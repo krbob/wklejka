@@ -18,8 +18,8 @@
   --text: #1e293b;
   --text-secondary: #64748b;
   --border: #e2e8f0;
-  --danger: #ef4444;
-  --danger-hover: #dc2626;
+  --danger: #b91c1c;
+  --danger-hover: #991b1b;
   --toast-bg: #111827;
   --toast-text: #f8fafc;
   --radius: 12px;
@@ -1385,5 +1385,229 @@ article.clip {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- Pagination, selection and maintenance --- */
+
+.clip-toolbar {
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -2px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.selection-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.selection-all input,
+.clip-select {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--action-bg);
+}
+
+#selected-count {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+
+.clip.is-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.clip-select-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.clip-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.clip-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--bg);
+  font-size: 0.74rem;
+}
+
+.clip-badge.pinned {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 24px;
+}
+
+#load-more {
+  min-width: 180px;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.modal-description {
+  margin-bottom: 14px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.share-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.share-qr-frame {
+  display: grid;
+  place-items: center;
+  width: min(280px, 100%);
+  min-height: 264px;
+  margin: 4px auto 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: #334155;
+  text-align: center;
+}
+
+.share-qr-frame img {
+  display: block;
+  width: min(240px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.share-qr-status {
+  line-height: 1.45;
+}
+
+.share-link {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+.storage-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+#storage-progress {
+  width: 100%;
+  height: 14px;
+  margin: 8px 0 16px;
+  accent-color: var(--action-bg);
+}
+
+.storage-details {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto;
+  gap: 7px 16px;
+  margin: 8px 0 18px;
+}
+
+.storage-details dt {
+  color: var(--text-secondary);
+}
+
+.storage-details dd {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.storage-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.cleanup-panel {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.cleanup-panel h3 {
+  margin-bottom: 12px;
+  font-size: 1rem;
+}
+
+.cleanup-result {
+  min-height: 24px;
+  margin: 10px 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+@media (max-width: 700px) {
+  .clip-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  #selection-toggle {
+    width: 100%;
+  }
+
+  .selection-toolbar > .btn {
+    flex: 1 1 140px;
+  }
+
+  .storage-actions > * {
+    flex: 1 1 160px;
+  }
+
+  .share-actions > .btn {
+    flex: 1 1 140px;
+  }
+
+  .clip-meta {
+    align-items: flex-start;
   }
 }

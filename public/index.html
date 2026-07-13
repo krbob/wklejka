@@ -25,6 +25,7 @@
       <span class="subtitle">schowek w sieci</span>
     </div>
     <div class="header-right">
+      <button id="storage-btn" class="header-button" type="button">Pamięć</button>
       <button id="notification-btn" class="header-button" type="button" hidden>Powiadomienia</button>
       <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Zmień motyw"></button>
       <div id="status" class="connection-status connecting" role="status" aria-live="polite">
@@ -67,7 +68,7 @@
       <div class="clip-toolbar">
       <label class="search-field">
         <span class="visually-hidden">Szukaj wpisów</span>
-        <input id="search-input" type="search" autocomplete="off" placeholder="Szukaj wpis&oacute;w">
+        <input id="search-input" type="search" autocomplete="off" maxlength="200" placeholder="Szukaj wpis&oacute;w">
       </label>
       <label class="filter-field">
         <span id="type-filter-label">Typ</span>
@@ -78,9 +79,22 @@
           <option value="file">Pliki</option>
         </select>
       </label>
+      <button id="selection-toggle" class="btn btn-secondary" type="button">Zaznacz</button>
       <output id="result-count" for="search-input type-filter" aria-live="polite"></output>
       </div>
+      <div id="selection-toolbar" class="selection-toolbar" hidden>
+        <label class="selection-all">
+          <input id="select-all-visible" type="checkbox">
+          <span id="select-all-label">Zaznacz wszystkie widoczne</span>
+        </label>
+        <output id="selected-count" aria-live="polite">Zaznaczono: 0</output>
+        <button id="bulk-delete" class="btn btn-danger" type="button" disabled>Usuń zaznaczone</button>
+        <button id="selection-cancel" class="btn btn-secondary" type="button">Anuluj</button>
+      </div>
       <ol id="clips" class="clip-list" aria-label="Wpisy"></ol>
+      <div class="load-more-row">
+        <button id="load-more" class="btn btn-secondary" type="button" hidden>Wczytaj więcej</button>
+      </div>
     </section>
   </main>
 
@@ -147,6 +161,87 @@
       </div>
       <div class="modal-actions">
         <button id="manage-close" class="btn btn-secondary" type="button">Zamknij</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="clip-expiry-modal" class="modal-dialog" aria-labelledby="clip-expiry-title">
+    <form method="dialog" class="modal">
+      <h2 id="clip-expiry-title">Wygasanie wpisu</h2>
+      <p id="clip-expiry-current" class="modal-description"></p>
+      <label class="modal-label">
+        <span id="clip-expiry-label">Wygasa po</span>
+        <select id="clip-expiry-value">
+          <option value="">Nigdy</option>
+          <option value="3600000">1 godzinie</option>
+          <option value="86400000">24 godzinach</option>
+          <option value="604800000">7 dniach</option>
+          <option value="2592000000">30 dniach</option>
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button id="clip-expiry-cancel" class="btn btn-secondary" type="button">Anuluj</button>
+        <button id="clip-expiry-save" class="btn btn-primary" type="button">Zapisz</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="share-modal" class="modal-dialog share-dialog" aria-labelledby="share-title" aria-describedby="share-description">
+    <form method="dialog" class="modal">
+      <h2 id="share-title">Udostępnij wpis</h2>
+      <p id="share-description" class="modal-description">Zeskanuj kod QR na innym urządzeniu albo skopiuj bezpośredni link.</p>
+      <div id="share-qr-frame" class="share-qr-frame" aria-busy="true">
+        <img id="share-qr" alt="Kod QR prowadzący do tego wpisu" width="240" height="240" hidden>
+        <div id="share-qr-status" class="share-qr-status" role="status" aria-live="polite">Generowanie kodu QR…</div>
+      </div>
+      <label class="modal-label" for="share-link">
+        <span id="share-link-label">Link do wpisu</span>
+      </label>
+      <input id="share-link" class="share-link" type="url" readonly>
+      <div class="share-actions">
+        <button id="share-native" class="btn btn-primary" type="button" hidden>Udostępnij systemowo</button>
+        <button id="share-copy" class="btn btn-secondary" type="button">Kopiuj link</button>
+        <button id="share-close" class="btn btn-secondary" type="button">Zamknij</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="storage-modal" class="modal-dialog storage-dialog" aria-labelledby="storage-title">
+    <form method="dialog" class="modal">
+      <h2 id="storage-title">Pamięć i konserwacja</h2>
+      <section id="storage-status" aria-live="polite" aria-busy="true">
+        <p id="storage-usage-label">Ładowanie…</p>
+        <progress id="storage-progress" value="0" max="1" aria-labelledby="storage-usage-label"></progress>
+        <dl id="storage-details" class="storage-details"></dl>
+      </section>
+      <div class="storage-actions">
+        <button id="storage-refresh" class="btn btn-secondary" type="button">Odśwież</button>
+        <a id="storage-export" class="btn btn-secondary button-link" href="/api/export" download>Eksportuj metadane</a>
+      </div>
+      <p id="storage-backup-note" class="modal-description">Eksport nie zawiera plików. Pełny backup wolumenu opisano w dokumentacji wdrożenia.</p>
+      <section class="cleanup-panel" aria-labelledby="cleanup-title">
+        <h3 id="cleanup-title">Porządkowanie</h3>
+        <label class="modal-label">
+          <span id="cleanup-scope-label">Zakres</span>
+          <select id="cleanup-scope">
+            <option value="board">Bieżąca karta</option>
+            <option value="all">Wszystkie karty</option>
+          </select>
+        </label>
+        <label class="modal-label">
+          <span id="cleanup-age-label">Starsze niż</span>
+          <select id="cleanup-age">
+            <option value="604800000">7 dni</option>
+            <option value="2592000000">30 dni</option>
+            <option value="7776000000">90 dni</option>
+          </select>
+        </label>
+        <button id="cleanup-preview" class="btn btn-secondary" type="button">Sprawdź, co zostanie usunięte</button>
+        <div id="cleanup-result" class="cleanup-result" role="status" aria-live="polite"></div>
+        <button id="cleanup-confirm" class="btn btn-danger" type="button" hidden>Potwierdź usunięcie</button>
+      </section>
+      <div class="modal-actions">
+        <button id="storage-close" class="btn btn-secondary" type="button">Zamknij</button>
       </div>
     </form>
   </dialog>
