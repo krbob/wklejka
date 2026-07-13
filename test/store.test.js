@@ -22,6 +22,21 @@ test('normalizeStore fills missing clip arrays for known boards', () => {
   assert.equal(input.clips.work, undefined);
 });
 
+test('normalizeStore restores exactly one default board when valid custom boards exist', () => {
+  const normalized = normalizeStore({
+    boards: [{ id: 'work', name: 'Work' }, { id: 'work', name: 'Duplicate' }],
+    clips: { work: [{ id: 'c1', type: 'text', content: 'kept' }] },
+  }, 123);
+
+  assert.deepEqual(normalized.boards, [
+    { id: 'default', name: 'Schowek', createdAt: 123 },
+    { id: 'work', name: 'Work' },
+  ]);
+  assert.equal(normalized.boards.filter(board => board.id === 'default').length, 1);
+  assert.deepEqual(normalized.clips.default, []);
+  assert.deepEqual(normalized.clips.work, [{ id: 'c1', type: 'text', content: 'kept' }]);
+});
+
 test('normalizeStore replaces invalid board and clip roots with empty collections', () => {
   const normalized = normalizeStore({ boards: 'bad', clips: [] });
 

@@ -146,12 +146,13 @@ async function jsonRequest(app, pathname, method, body, headers = {}) {
 }
 
 async function upload(app, data, {
+  boardId = 'default',
   clipType = 'file',
   contentType = 'application/octet-stream',
   originalName = 'fixture.bin',
   headers = {},
 } = {}) {
-  return request(app, '/api/boards/default/uploads', {
+  return request(app, `/api/boards/${boardId}/uploads`, {
     method: 'POST',
     headers: {
       'Content-Type': contentType,
@@ -445,4 +446,321 @@ test('readiness reports durable-store failure, failed mutations stay invisible, 
 
   const metadata = JSON.parse(await fs.promises.readFile(path.join(app.dataDir, 'store.json'), 'utf8'));
   assert.deepEqual(metadata.clips.default.map(clip => clip.content), ['persisted after recovery']);
+});
+
+test('clip pagination keeps pinned order, has no cross-page duplicates, and preserves the legacy array', async (t) => {
+  const app = await startApp(t, {
+    DEFAULT_CLIPS_PAGE_SIZE: '2',
+    MAX_CLIPS_PAGE_SIZE: '3',
+  });
+  const clips = [];
+  for (const content of ['oldest needle', 'second', 'third needle', 'newest']) {
+    const result = await jsonRequest(
+      app,
+      '/api/boards/default/clips',
+      'POST',
+      { type: 'text', content },
+    );
+    assert.equal(result.status, 200);
+    clips.push(result.body);
+    await delay(3);
+  }
+  const file = await upload(app, Buffer.from('report'), {
+    contentType: 'text/plain',
+    originalName: 'Needle-report.txt',
+  });
+  assert.equal(file.status, 200);
+  clips.push(file.body);
+
+  for (const clip of [clips[0], clips[2]]) {
+    const pinned = await jsonRequest(
+      app,
+      `/api/boards/default/clips/${clip.id}`,
+      'PUT',
+      { pinned: true },
+    );
+    assert.equal(pinned.status, 200);
+    clip.pinned = true;
+  }
+
+  const expected = [...clips].sort((left, right) => {
+    const pinned = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
+    if (pinned) return pinned;
+    const created = right.createdAt - left.createdAt;
+    return created || String(right.id).localeCompare(String(left.id));
+  });
+  const legacy = await request(app, '/api/boards/default/clips');
+  assert.equal(legacy.status, 200);
+  assert.equal(Array.isArray(legacy.body), true);
+  assert.deepEqual(legacy.body.map(clip => clip.id), expected.map(clip => clip.id));
+  assert.deepEqual(
+    legacy.body.slice(0, 2).map(clip => clip.id),
+    [clips[2].id, clips[0].id],
+    'pinned clips must precede newer unpinned clips and remain newest-first within the group',
+  );
+
+  const collected = [];
+  const seen = new Set();
+  let cursor = null;
+  do {
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    const page = await request(app, `/api/boards/default/clips?limit=2${suffix}`);
+    assert.equal(page.status, 200);
+    assert.equal(page.body.total, expected.length);
+    assert.ok(page.body.items.length > 0);
+    for (const clip of page.body.items) {
+      assert.equal(seen.has(clip.id), false, `duplicate clip across cursor pages: ${clip.id}`);
+      seen.add(clip.id);
+      collected.push(clip.id);
+    }
+    cursor = page.body.nextCursor;
+  } while (cursor);
+  assert.deepEqual(collected, expected.map(clip => clip.id));
+
+  const search = await request(app, '/api/boards/default/clips?q=NEEDLE&limit=3');
+  assert.equal(search.status, 200);
+  assert.equal(search.body.total, 3);
+  assert.deepEqual(
+    new Set(search.body.items.map(clip => clip.id)),
+    new Set([clips[0].id, clips[2].id, file.body.id]),
+  );
+  const typedSearch = await request(app, '/api/boards/default/clips?type=file&q=needle');
+  assert.equal(typedSearch.status, 200);
+  assert.equal(typedSearch.body.total, 1);
+  assert.deepEqual(typedSearch.body.items.map(clip => clip.id), [file.body.id]);
+
+  assert.equal((await request(app, '/api/boards/default/clips?limit=4')).status, 400);
+  assert.equal((await request(app, '/api/boards/default/clips?cursor=not-a-cursor')).status, 400);
+  assert.equal((await request(app, '/api/boards/default/clips?type=archive')).status, 400);
+  assert.equal((await request(app, '/api/boards/default/clips?unexpected=1')).status, 400);
+});
+
+test('pin and expiry updates validate bounds and can be cleared', async (t) => {
+  const app = await startApp(t, { MAX_CLIP_EXPIRY_MS: '1000' });
+  const created = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'expiring note' },
+  );
+  assert.equal(created.status, 200);
+
+  const beforeUpdate = Date.now();
+  const updated = await jsonRequest(
+    app,
+    `/api/boards/default/clips/${created.body.id}`,
+    'PUT',
+    { pinned: true, expiresIn: 200 },
+  );
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.pinned, true);
+  assert.ok(updated.body.expiresAt >= beforeUpdate + 200);
+  assert.ok(updated.body.expiresAt <= Date.now() + 200);
+
+  const invalidBodies = [
+    { pinned: 'true' },
+    { expiresAt: Date.now() + 100, expiresIn: 100 },
+    { expiresIn: 0 },
+    { expiresIn: 1001 },
+    { expiresAt: Date.now() - 1 },
+  ];
+  for (const body of invalidBodies) {
+    const invalid = await jsonRequest(
+      app,
+      `/api/boards/default/clips/${created.body.id}`,
+      'PUT',
+      body,
+    );
+    assert.equal(invalid.status, 400, `unexpected status for ${JSON.stringify(body)}`);
+  }
+
+  const cleared = await jsonRequest(
+    app,
+    `/api/boards/default/clips/${created.body.id}`,
+    'PUT',
+    { pinned: false, expiresAt: null },
+  );
+  assert.equal(cleared.status, 200);
+  assert.equal(Object.hasOwn(cleared.body, 'pinned'), false);
+  assert.equal(Object.hasOwn(cleared.body, 'expiresAt'), false);
+});
+
+test('bulk delete is atomic, respects locks and limits, and reclaims file bytes', async (t) => {
+  const app = await startApp(t, { MAX_BULK_DELETE: '3' });
+  const defaultLock = await jsonRequest(app, '/api/boards/default', 'PUT', { locked: true });
+  assert.equal(defaultLock.status, 400);
+  assert.equal(defaultLock.body.code, 'DEFAULT_BOARD_CANNOT_BE_LOCKED');
+  const board = await jsonRequest(app, '/api/boards', 'POST', { name: 'Bulk operations' });
+  assert.equal(board.status, 200);
+  const clipsPath = `/api/boards/${board.body.id}/clips`;
+  const first = await jsonRequest(
+    app,
+    clipsPath,
+    'POST',
+    { type: 'text', content: 'delete me' },
+  );
+  const survivor = await jsonRequest(
+    app,
+    clipsPath,
+    'POST',
+    { type: 'text', content: 'keep me' },
+  );
+  const file = await upload(app, Buffer.from('12345'), {
+    boardId: board.body.id,
+    originalName: 'delete.bin',
+  });
+  assert.equal(first.status, 200);
+  assert.equal(survivor.status, 200);
+  assert.equal(file.status, 200);
+
+  assert.equal((await jsonRequest(app, `/api/boards/${board.body.id}`, 'PUT', { locked: true })).status, 200);
+  const blocked = await jsonRequest(
+    app,
+    `${clipsPath}/bulk-delete`,
+    'POST',
+    { ids: [first.body.id] },
+  );
+  assert.equal(blocked.status, 403);
+  assert.equal((await jsonRequest(app, `/api/boards/${board.body.id}`, 'PUT', { locked: false })).status, 200);
+
+  const missingId = 'missing-clip';
+  const deleted = await jsonRequest(
+    app,
+    `${clipsPath}/bulk-delete`,
+    'POST',
+    { ids: [file.body.id, first.body.id, missingId] },
+  );
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.body.deleted, 2);
+  assert.deepEqual(new Set(deleted.body.deletedIds), new Set([file.body.id, first.body.id]));
+  assert.deepEqual(deleted.body.notFoundIds, [missingId]);
+  assert.equal(deleted.body.reclaimedBytes, 5);
+  assert.equal((await request(app, file.body.fileUrl)).status, 404);
+
+  const remaining = await request(app, clipsPath);
+  assert.deepEqual(remaining.body.map(clip => clip.id), [survivor.body.id]);
+  const persisted = JSON.parse(await fs.promises.readFile(path.join(app.dataDir, 'store.json'), 'utf8'));
+  assert.deepEqual(persisted.clips[board.body.id].map(clip => clip.id), [survivor.body.id]);
+
+  assert.equal((await jsonRequest(
+    app,
+    `${clipsPath}/bulk-delete`,
+    'POST',
+    { ids: [] },
+  )).status, 400);
+  assert.equal((await jsonRequest(
+    app,
+    `${clipsPath}/bulk-delete`,
+    'POST',
+    { ids: [survivor.body.id, survivor.body.id] },
+  )).status, 400);
+  assert.equal((await jsonRequest(
+    app,
+    `${clipsPath}/bulk-delete`,
+    'POST',
+    { ids: ['clip-a', 'clip-b', 'clip-c', 'clip-d'] },
+  )).status, 400);
+});
+
+test('maintenance dry-run previews cleanup and execution preserves pinned clips', async (t) => {
+  const app = await startApp(t, {
+    CLIP_RETENTION_MS: '0',
+    ORPHAN_GRACE_MS: '0',
+  });
+  const pinned = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'pinned survivor' },
+  );
+  assert.equal(pinned.status, 200);
+  assert.equal((await jsonRequest(
+    app,
+    `/api/boards/default/clips/${pinned.body.id}`,
+    'PUT',
+    { pinned: true },
+  )).status, 200);
+  const file = await upload(app, Buffer.from('cleanup fixture'), { originalName: 'cleanup.bin' });
+  assert.equal(file.status, 200);
+
+  const orphanPath = path.join(app.dataDir, 'files', 'orphan.bin');
+  await fs.promises.writeFile(orphanPath, 'orphan');
+  const oldTime = new Date(Date.now() - 10_000);
+  await fs.promises.utimes(orphanPath, oldTime, oldTime);
+  await delay(5);
+  const olderThan = Date.now();
+
+  const preview = await jsonRequest(
+    app,
+    '/api/maintenance/cleanup',
+    'POST',
+    { dryRun: true, boardId: 'default', olderThan },
+  );
+  assert.equal(preview.status, 200);
+  assert.equal(preview.body.dryRun, true);
+  assert.deepEqual(preview.body.matched, { boards: 0, clips: 1, orphans: 1 });
+  assert.deepEqual(preview.body.deleted, { boards: 0, clips: 0, orphans: 0 });
+  assert.equal(preview.body.reclaimedBytes, Buffer.byteLength('cleanup fixture') + Buffer.byteLength('orphan'));
+  assert.equal((await request(app, file.body.fileUrl)).status, 200);
+  assert.equal((await fs.promises.stat(orphanPath)).isFile(), true);
+
+  const cleanup = await jsonRequest(
+    app,
+    '/api/maintenance/cleanup',
+    'POST',
+    { dryRun: false, boardId: 'default', olderThan },
+  );
+  assert.equal(cleanup.status, 200);
+  assert.deepEqual(cleanup.body.matched, { boards: 0, clips: 1, orphans: 1 });
+  assert.deepEqual(cleanup.body.deleted, { boards: 0, clips: 1, orphans: 1 });
+  assert.equal(cleanup.body.reclaimedBytes, preview.body.reclaimedBytes);
+  await assert.rejects(fs.promises.stat(orphanPath), error => (
+    Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+  ));
+  assert.equal((await request(app, file.body.fileUrl)).status, 404);
+  const remaining = await request(app, '/api/boards/default/clips');
+  assert.deepEqual(remaining.body.map(clip => clip.id), [pinned.body.id]);
+
+  const invalid = await jsonRequest(
+    app,
+    '/api/maintenance/cleanup',
+    'POST',
+    { dryRun: true, olderThan: Date.now() + 60_000 },
+  );
+  assert.equal(invalid.status, 400);
+});
+
+test('metadata export and Prometheus metrics require auth and do not leak clip content', async (t) => {
+  const app = await startApp(t, { AUTH_TOKEN: 'p2-secret' });
+  const authorization = { Authorization: 'Bearer p2-secret' };
+
+  assert.equal((await request(app, '/api/export')).status, 401);
+  assert.equal((await request(app, '/api/metrics')).status, 401);
+  assert.equal((await request(app, '/livez')).status, 200);
+
+  const clip = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'private metric sentinel' },
+    authorization,
+  );
+  assert.equal(clip.status, 200);
+
+  const exported = await request(app, '/api/export', { headers: authorization });
+  assert.equal(exported.status, 200);
+  assert.equal(exported.body.schemaVersion, 1);
+  assert.equal(Number.isNaN(Date.parse(exported.body.exportedAt)), false);
+  assert.equal(exported.body.boards.some(board => board.id === 'default'), true);
+  assert.deepEqual(exported.body.clips.default.map(item => item.id), [clip.body.id]);
+  assert.match(exported.headers.get('content-disposition'), /^attachment;/);
+
+  const metrics = await request(app, '/api/metrics', { headers: authorization });
+  assert.equal(metrics.status, 200);
+  assert.match(metrics.headers.get('content-type'), /^text\/plain/);
+  assert.match(metrics.body, /^# HELP wklejka_up/m);
+  assert.match(metrics.body, /^wklejka_store_ready 1$/m);
+  assert.match(metrics.body, /^wklejka_clips 1$/m);
+  assert.match(metrics.body, /^wklejka_http_requests_total\{method="GET",status="401"\} 2$/m);
+  assert.doesNotMatch(metrics.body, /private metric sentinel/);
 });
