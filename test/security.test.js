@@ -33,11 +33,23 @@ test('isPrivateAddress blocks private and documentation IPv6 ranges', () => {
   [
     '::',
     '::1',
+    '::ffff:127.0.0.1',
+    '::ffff:7f00:1',
     '::ffff:192.168.1.1',
+    '::ffff:c0a8:101',
+    '0:0:0:0:0:ffff:c0a8:101',
     'fc00::1',
     'fd12:3456::1',
     'fe80::1',
+    'fe80::1%lo0',
+    'febf::1',
+    'fec0::1',
+    'feff:ffff::1',
     'ff02::1',
+    '100::1',
+    '64:ff9b::7f00:1',
+    '64:ff9b:1::808:808',
+    '2001:2::1',
     '2001:db8::1',
   ].forEach(address => assert.equal(isPrivateAddress(address), true, address));
 });
@@ -46,6 +58,9 @@ test('isPrivateAddress allows public IPv6 addresses', () => {
   [
     '2606:4700:4700::1111',
     '2001:4860:4860::8888',
+    '::ffff:8.8.8.8',
+    '::ffff:808:808',
+    '0:0:0:0:0:ffff:808:808',
   ].forEach(address => assert.equal(isPrivateAddress(address), false, address));
 });
 
