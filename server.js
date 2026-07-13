@@ -67,6 +67,7 @@ const INLINE_FILE_EXT_TO_MIME = new Map([
 const BINARY_DATA_URL_PATTERN = /^data:([a-zA-Z0-9!#$&^_.+-]{1,63}\/[a-zA-Z0-9!#$&^_.+-]{1,63})(?:;[^,\r\n]*)?;base64,([a-zA-Z0-9+/]*={0,2})$/;
 const MAX_LINK_PREVIEW_REDIRECTS = 5;
 const MAX_LINK_PREVIEW_BYTES = 64 * 1024;
+const LINK_PREVIEW_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_TEXT_CLIP_BYTES = 1024 * 1024;
 const MAX_TEXT_CLIP_BYTES = readPositiveInt(process.env.MAX_TEXT_CLIP_BYTES, DEFAULT_MAX_TEXT_CLIP_BYTES);
 const DEFAULT_MAX_CLIP_BINARY_BYTES = 100 * 1024 * 1024;
@@ -704,6 +705,7 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
 
     const req = client.request(url, {
       method: 'GET',
+      signal: AbortSignal.timeout(LINK_PREVIEW_REQUEST_TIMEOUT_MS),
       headers: {
         'User-Agent': 'Wklejka/1.0 (link-preview)',
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
@@ -751,7 +753,7 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
       response.on('error', fail);
     });
 
-    req.setTimeout(5000, () => {
+    req.setTimeout(LINK_PREVIEW_REQUEST_TIMEOUT_MS, () => {
       req.destroy(new Error('Preview request timed out'));
     });
     req.on('error', fail);
