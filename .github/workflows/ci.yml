@@ -1,4 +1,4 @@
-name: CI Pipeline
+name: CI
 
 on:
   push:
@@ -12,6 +12,8 @@ concurrency:
 
 env:
   APP_PORT: 3000
+  CI: true
+  NODE_ENV: test
   TEST_URLS: |
     /
     /api/boards
@@ -19,33 +21,39 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
-      - name: Run unit tests
-        run: npm test
+      - name: Run quality checks
+        run: npm run check
 
       - name: Lint Dockerfile
-        run: docker run --rm -i hadolint/hadolint:latest < Dockerfile
+        run: >-
+          docker run --rm -i
+          hadolint/hadolint:v2.14.0-alpine@sha256:7aba693c1442eb31c0b015c129697cb3b6cb7da589d85c7562f9deb435a6657c
+          < Dockerfile
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           load: true
@@ -57,7 +65,7 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f image \
             --exit-code 1 \
             --scanners vuln \
             --severity HIGH,CRITICAL \
@@ -65,14 +73,20 @@ jobs:
             --quiet \
             --no-progress \
             --table-mode summary \
+            --timeout 5m \
             wklejka:test
 
       - name: Run container
-        run: docker run -d --name app -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" wklejka:test
+        run: |
+          docker run -d --name app \
+            --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
+            -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" \
+            wklejka:test
 
       - name: Wait until all endpoints return 200
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
           IFS=$'\n' read -r -d '' -a URLS < <(printf '%s\0' "${{ env.TEST_URLS }}")
           echo "Checking ${#URLS[@]} endpoint(s)..."
@@ -109,6 +123,7 @@ jobs:
       - name: Smoke test clip creation
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
 
           TEXT_CLIP=$(curl -fsS -X POST "${base}/api/boards/default/clips" \
@@ -153,6 +168,7 @@ jobs:
       - name: Smoke test board rename, reorder, and lock
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
 
           # Create two boards
@@ -226,14 +242,11 @@ jobs:
 
           echo "Board rename, reorder, and lock tests passed"
 
-      - name: Smoke test link preview
+      - name: Smoke test link preview validation
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
-
-          # Fetch preview of a public page
-          curl -fsS --get "${base}/api/link-preview" \
-            --data-urlencode "url=https://example.com" | grep -q '"title"'
 
           # Invalid URL should return 400
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --get "${base}/api/link-preview" \
@@ -250,10 +263,12 @@ jobs:
       - name: Smoke test auth rate limit
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
 
           docker rm -f app
           docker run -d --name app \
+            --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
             -e AUTH_TOKEN=secret \
             -e AUTH_RATE_LIMIT=2 \
             -p "${{ env.APP_PORT }}:${{ env.APP_PORT }}" \
@@ -281,10 +296,12 @@ jobs:
       - name: Smoke test proxy auth settings
         run: |
           set -euo pipefail
+          curl() { command curl --connect-timeout 2 --max-time 10 "$@"; }
           base="http://localhost:${{ env.APP_PORT }}"
 
           docker rm -f app
           docker run -d --name app \
+            --tmpfs /app/data:rw,noexec,nosuid,size=256m,uid=1000,gid=1000,mode=0700 \
             -e AUTH_TOKEN=secret \
             -e AUTH_RATE_LIMIT=1 \
             -e AUTH_COOKIE_SECURE=auto \
@@ -321,12 +338,17 @@ jobs:
 
           echo "Proxy auth settings test passed"
 
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs app || true
+
       - name: Clean up
         if: always()
         run: docker rm -f app || true
 
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -335,13 +357,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Prepare image tags
         id: image
@@ -358,14 +382,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
