@@ -257,12 +257,25 @@ function t(key, params = {}) {
 
 function updateStaticTexts() {
   $('.subtitle').textContent = t('subtitle');
+  $('.skip-link').textContent = lang === 'pl' ? 'Przejdź do treści' : 'Skip to content';
   $('#text-input').placeholder = t('placeholder');
   $('.hint').textContent = t('hint');
   $('#send-btn').textContent = t('send');
   $('.drop-overlay-content p').textContent = t('dropHereFiles');
   $('#file-btn').textContent = t('attachFile');
   $('#search-input').placeholder = t('searchPlaceholder');
+  $('#add-board-btn').textContent = t('newTab');
+  $('#add-board-btn').setAttribute('aria-label', t('newTab').replace(/^\+\s*/, ''));
+  $('#add-board-btn').removeAttribute('hidden');
+  $('#retry-btn').textContent = t('retry');
+  $('#type-filter-label').textContent = t('typeFilter');
+  const filter = $('#type-filter');
+  filter.options[0].textContent = t('typeAll');
+  filter.options[1].textContent = t('text');
+  filter.options[2].textContent = t('typeImages');
+  filter.options[3].textContent = t('typeFiles');
+  $('#composer-heading').textContent = t('addClip');
+  $('#clips').setAttribute('aria-label', t('clipsLabel'));
   // Modal texts
   $('#modal-title').textContent = t('newTabTitle');
   $('#modal-name-label').textContent = t('boardNameLabel');
@@ -275,6 +288,13 @@ function updateStaticTexts() {
   sel.options[2].textContent = t('expires24h');
   sel.options[3].textContent = t('expires7d');
   sel.options[4].textContent = t('expires30d');
+  $('#manage-name-label').textContent = t('boardNameLabel');
+  $('#manage-save').textContent = t('saveName');
+  $('#manage-left').textContent = `← ${t('moveLeft')}`;
+  $('#manage-right').textContent = `${t('moveRight')} →`;
+  $('.move-actions').setAttribute('aria-label', t('moveGroup'));
+  $('#manage-delete').textContent = t('deleteTab');
+  $('#manage-close').textContent = t('close');
 }
 
 // --- Dark mode ---
@@ -339,6 +359,16 @@ let renderedBoardIds = new Set();
 const linkPreviewCache = new Map();
 let searchQuery = '';
 let focusedClipHash = '';
+let clipTypeFilter = 'all';
+let wsReconnectTimer = null;
+let manageBoardId = null;
+let initialClipsLoaded = false;
+const dialogOpeners = new WeakMap();
+const connectionState = {
+  api: 'loading',
+  ws: 'connecting',
+  message: '',
+};
 const DRAFTS_STORAGE_KEY = 'wklejka-drafts-v1';
 const uploadTasks = new Map();
 let filePickerBoardId = null;
@@ -388,8 +418,112 @@ function selectBoard(boardId, { clearHash = true } = {}) {
   unreadCounts[boardId] = 0;
   updateTitle();
   renderTabs();
+  renderBoardSummary();
   loadClips(boardId);
   return true;
+}
+
+function renderConnectionStatus() {
+  const status = $('#status');
+  const text = $('#status-text');
+  const retry = $('#retry-btn');
+  if (!status || !text || !retry) return;
+
+  let mode = 'online';
+  let label = t('connected');
+  if (!navigator.onLine) {
+    mode = 'offline';
+    label = t('offline');
+  } else if (connectionState.api === 'loading') {
+    mode = 'connecting';
+    label = t('loading');
+  } else if (connectionState.api === 'error') {
+    mode = 'error';
+    label = connectionState.message || t('syncError');
+  } else if (connectionState.ws !== 'online') {
+    mode = 'connecting';
+    label = t('realtimeReconnecting');
+  }
+
+  status.className = `connection-status ${mode}`;
+  status.querySelector('.status-dot')?.removeAttribute('hidden');
+  text.removeAttribute('hidden');
+  text.textContent = label;
+  status.title = label;
+  retry.hidden = mode === 'online' || connectionState.api === 'loading';
+}
+
+function setApiState(state, message = '') {
+  connectionState.api = state;
+  connectionState.message = message;
+  renderConnectionStatus();
+}
+
+function setWsState(state) {
+  connectionState.ws = state;
+  renderConnectionStatus();
+}
+
+function announce(message) {
+  const region = $('#realtime-announcer');
+  if (!region) return;
+  region.textContent = '';
+  requestAnimationFrame(() => { region.textContent = message; });
+}
+
+function showSecureContextWarning() {
+  const warning = $('#secure-warning');
+  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
+  const shouldWarn = !window.isSecureContext && !loopback;
+  warning.hidden = !shouldWarn;
+  if (shouldWarn) warning.textContent = t('secureWarning');
+}
+
+function updateNotificationButton() {
+  const button = $('#notification-btn');
+  if (!button) return;
+  if (!('Notification' in window) || !window.isSecureContext) {
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  if (Notification.permission === 'granted') {
+    button.textContent = t('notificationsOn');
+    button.disabled = true;
+  } else if (Notification.permission === 'denied') {
+    button.textContent = t('notificationsBlocked');
+    button.disabled = true;
+  } else {
+    button.textContent = t('notificationsEnable');
+    button.disabled = false;
+  }
+}
+
+function renderBoardSummary() {
+  const board = boards.find(item => item.id === currentBoardId);
+  if (!board) return;
+  const name = board.id === 'default' ? t('defaultBoard') : board.name;
+  $('#board-heading').textContent = name;
+  const locked = !!board.locked;
+  $('#text-input').readOnly = locked;
+  $('#text-input').placeholder = locked ? t('boardLocked') : t('placeholder');
+  $('#send-btn').disabled = locked;
+  $('#file-btn').disabled = locked;
+  const badges = $('#board-badges');
+  badges.innerHTML = '';
+  if (locked) {
+    const badge = document.createElement('span');
+    badge.className = 'board-badge';
+    badge.textContent = `🔒 ${t('lockedBadge')}`;
+    badges.appendChild(badge);
+  }
+  const expiry = boardTooltip(board);
+  if (expiry) {
+    const badge = document.createElement('span');
+    badge.className = 'board-badge';
+    badge.textContent = expiry;
+    badges.appendChild(badge);
+  }
 }
 
 // --- API helpers ---
@@ -484,6 +618,7 @@ async function loadBoards() {
   }
   renderedBoardIds = new Set(boards.map(b => b.id));
   renderTabs();
+  renderBoardSummary();
   restoreDraft(currentBoardId);
   renderUploads();
 }
@@ -491,13 +626,40 @@ async function loadBoards() {
 async function loadClips(boardId = currentBoardId) {
   const requestId = ++loadClipsRequestId;
   const version = clipStateVersion;
-  const nextClips = await api('GET', '/boards/' + boardId + '/clips');
+  const container = $('#clips');
+  container.setAttribute('aria-busy', 'true');
+  if (boardId === currentBoardId) {
+    const loading = document.createElement('li');
+    loading.className = 'empty-state';
+    loading.textContent = t('loadingClips');
+    container.replaceChildren(loading);
+  }
+  const nextClips = await api('GET', '/boards/' + encodeURIComponent(boardId) + '/clips');
   if (requestId !== loadClipsRequestId || boardId !== currentBoardId) return;
   if (version !== clipStateVersion) return loadClips(boardId);
   clips = nextClips;
+  initialClipsLoaded = true;
+  container.setAttribute('aria-busy', 'false');
   renderedClipIds.clear();
   renderClips();
   focusClipFromHash();
+}
+
+function renderSyncError(message) {
+  const container = $('#clips');
+  container.setAttribute('aria-busy', 'false');
+  if (initialClipsLoaded) return;
+  const item = document.createElement('li');
+  item.className = 'empty-state error-state';
+  const text = document.createElement('p');
+  text.textContent = message || t('syncError');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn btn-secondary';
+  retry.textContent = t('retry');
+  retry.addEventListener('click', syncFromServer);
+  item.append(text, retry);
+  container.replaceChildren(item);
 }
 
 async function syncFromServer() {
@@ -506,6 +668,7 @@ async function syncFromServer() {
     return syncPromise;
   }
 
+  setApiState('loading');
   syncPromise = (async () => {
     do {
       syncQueued = false;
@@ -513,9 +676,12 @@ async function syncFromServer() {
       await loadClips();
       lastSyncAt = Date.now();
     } while (syncQueued);
+    setApiState('online');
   })()
     .catch((error) => {
       console.warn('Sync failed:', error);
+      setApiState('error', error.message || t('syncError'));
+      renderSyncError(error.message);
     })
     .finally(() => {
       syncPromise = null;
@@ -649,6 +815,10 @@ async function startUpload(task) {
 
 function uploadBlob(blob, type, originalName, boardId = currentBoardId) {
   if (!blob || !boardId) return;
+  if (boards.find(board => board.id === boardId)?.locked) {
+    showToast(t('boardLocked'));
+    return;
+  }
   const task = {
     id: 'upload-' + Date.now() + Math.random().toString(36).slice(2, 7),
     boardId,
@@ -693,7 +863,12 @@ async function deleteClip(boardId, clipId) {
 async function createBoard(name, expiresIn) {
   const body = { name };
   if (expiresIn) body.expiresIn = Number(expiresIn);
-  await api('POST', '/boards', body);
+  const board = await api('POST', '/boards', body);
+  if (!boards.some(item => item.id === board.id)) {
+    boards.push(board);
+    renderTabs();
+  }
+  return board;
 }
 
 function animateTabOut(boardId, callback) {
@@ -701,8 +876,16 @@ function animateTabOut(boardId, callback) {
 }
 
 async function deleteBoard(boardId) {
-  if (!confirm(t('confirmDelete'))) return;
-  await api('DELETE', '/boards/' + boardId);
+  if (!confirm(t('confirmDelete'))) return false;
+  await api('DELETE', '/boards/' + encodeURIComponent(boardId));
+  boards = boards.filter(board => board.id !== boardId);
+  delete unreadCounts[boardId];
+  if (currentBoardId === boardId) {
+    const fallback = boards.find(board => board.id === 'default') || boards[0];
+    if (fallback) selectBoard(fallback.id, { clearHash: false });
+  }
+  renderTabs();
+  return true;
 }
 
 async function reorderBoard(draggedId, targetId) {
@@ -721,37 +904,49 @@ async function reorderBoard(draggedId, targetId) {
 
 // --- Link preview ---
 
-async function fetchLinkPreview(url) {
+function fetchLinkPreview(url) {
   if (linkPreviewCache.has(url)) return linkPreviewCache.get(url);
-  try {
+  const promise = (async () => {
     const res = await fetch('/api/link-preview?url=' + encodeURIComponent(url));
-    if (!res.ok) return null;
+    if (!res.ok) throw new Error(t('previewFailed'));
     const data = await res.json();
-    if (!data.title && !data.description) return null;
-    linkPreviewCache.set(url, data);
+    if (!data.title && !data.description) throw new Error(t('previewFailed'));
     return data;
-  } catch {
-    return null;
-  }
+  })();
+  linkPreviewCache.set(url, promise);
+  promise.catch(() => {
+    if (linkPreviewCache.get(url) === promise) linkPreviewCache.delete(url);
+  });
+  return promise;
 }
 
 function renderLinkPreviews(content, text) {
   const urls = (text.match(/https?:\/\/[^\s]+/g) || []).slice(0, 3);
   urls.forEach(url => {
-    fetchLinkPreview(url).then(preview => {
-      if (!preview || !preview.title) return;
-      if (content.querySelector(`.link-preview[href="${CSS.escape(url)}"]`)) return;
+    const control = document.createElement('div');
+    control.className = 'link-preview-request';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'preview-control';
+    button.textContent = t('previewLoad');
+    button.title = t('previewPrivacy');
+    let domainName = '';
+    try { domainName = new URL(url).hostname; } catch {}
+    if (domainName) button.setAttribute('aria-label', `${t('previewLoad')}: ${domainName}. ${t('previewPrivacy')}`);
+    control.appendChild(button);
+    content.appendChild(control);
+
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      button.textContent = t('loading');
+      try {
+        const preview = await fetchLinkPreview(url);
+        if (!control.isConnected) return;
       const card = document.createElement('a');
       card.className = 'link-preview';
       card.href = url;
       card.target = '_blank';
-      card.rel = 'noopener';
-      if (preview.image) {
-        const img = document.createElement('img');
-        img.src = preview.image;
-        img.onerror = () => img.remove();
-        card.appendChild(img);
-      }
+        card.rel = 'noopener noreferrer';
       const info = document.createElement('div');
       info.className = 'link-preview-info';
       const title = document.createElement('div');
@@ -764,14 +959,19 @@ function renderLinkPreviews(content, text) {
         desc.textContent = preview.description;
         info.appendChild(desc);
       }
-      try {
+        try {
         const domain = document.createElement('div');
         domain.className = 'link-preview-domain';
         domain.textContent = new URL(url).hostname;
         info.appendChild(domain);
       } catch {}
       card.appendChild(info);
-      content.appendChild(card);
+        control.replaceWith(card);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = t('retry');
+        showToast(error.message || t('previewFailed'));
+      }
     });
   });
 }
@@ -779,18 +979,21 @@ function renderLinkPreviews(content, text) {
 // --- WebSocket ---
 
 function connectWS() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  clearTimeout(wsReconnectTimer);
+  setWsState('connecting');
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
 
   ws.onopen = () => {
-    $('#status').className = 'status online';
-    $('#status').title = t('connected');
+    setWsState('online');
     if (wsOpenedOnce || !lastSyncAt) syncFromServer();
     wsOpenedOnce = true;
   };
 
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
     switch (msg.type) {
       case 'clip-added':
         if (msg.boardId === currentBoardId && !clips.find(c => c.id === msg.clip.id)) {
@@ -806,7 +1009,12 @@ function connectWS() {
           hiddenClipCount++;
         }
         updateTitle();
-        if (document.hidden && Notification.permission === 'granted') {
+        const announcedBoard = boards.find(board => board.id === msg.boardId);
+        const announcedBoardName = announcedBoard
+          ? (announcedBoard.id === 'default' ? t('defaultBoard') : announcedBoard.name)
+          : '';
+        announce(t('newClipAnnounce', { boardName: announcedBoardName }));
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
           const board = boards.find(b => b.id === msg.boardId);
           const boardName = board ? (board.id === 'default' ? t('defaultBoard') : board.name) : '';
           const body = t('notificationNewClip', { boardName });
@@ -855,7 +1063,10 @@ function connectWS() {
         const idx = boards.findIndex(b => b.id === msg.board.id);
         if (idx !== -1) boards[idx] = msg.board;
         renderTabs();
-        if (msg.board.id === currentBoardId) renderClips();
+        if (msg.board.id === currentBoardId) {
+          renderBoardSummary();
+          renderClips();
+        }
         break;
       }
       case 'board-deleted':
@@ -875,9 +1086,8 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    $('#status').className = 'status offline';
-    $('#status').title = t('reconnecting');
-    setTimeout(connectWS, 2000);
+    setWsState('offline');
+    if (navigator.onLine) wsReconnectTimer = setTimeout(connectWS, 2000);
   };
 
   ws.onerror = () => ws.close();
@@ -890,44 +1100,31 @@ function renderTabs() {
   nav.innerHTML = '';
 
   boards.forEach(board => {
+    const item = document.createElement('div');
+    item.className = 'tab-item';
+    item.setAttribute('role', 'presentation');
     const btn = document.createElement('button');
     btn.className = 'tab' + (board.id === currentBoardId ? ' active' : '');
     btn.dataset.boardId = board.id;
     btn.draggable = true;
+    btn.type = 'button';
+    btn.id = `board-tab-${board.id}`;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(board.id === currentBoardId));
+    btn.setAttribute('aria-controls', 'board-panel');
+    btn.tabIndex = board.id === currentBoardId ? 0 : -1;
+    if (board.id === currentBoardId) $('#board-panel').setAttribute('aria-labelledby', btn.id);
 
     const label = document.createElement('span');
     label.className = 'tab-label';
     label.textContent = board.id === 'default' ? t('defaultBoard') : board.name;
     btn.appendChild(label);
-
-    // Double-click to rename (non-default, non-locked)
-    if (board.id !== 'default') {
-      label.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        if (board.locked) return;
-        const input = document.createElement('input');
-        input.className = 'tab-rename-input';
-        input.value = board.name;
-        input.size = Math.max(board.name.length, 5);
-        btn.replaceChild(input, label);
-        input.focus();
-        input.select();
-        const commit = () => {
-          const newName = input.value.trim();
-          if (newName && newName !== board.name) {
-            api('PUT', '/boards/' + board.id, { name: newName });
-          }
-          label.textContent = newName || board.name;
-          if (input.parentNode === btn) btn.replaceChild(label, input);
-        };
-        input.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
-          if (ev.key === 'Escape') { if (input.parentNode === btn) btn.replaceChild(label, input); }
-          ev.stopPropagation();
-        });
-        input.addEventListener('blur', commit);
-        input.addEventListener('click', (ev) => ev.stopPropagation());
-      });
+    if (board.locked) {
+      const state = document.createElement('span');
+      state.className = 'tab-state';
+      state.textContent = '🔒';
+      state.setAttribute('aria-label', t('lockedBadge'));
+      btn.appendChild(state);
     }
 
     if (unreadCounts[board.id] > 0) {
@@ -940,36 +1137,6 @@ function renderTabs() {
     if (board.expiresAt) {
       const tip = boardTooltip(board);
       if (tip) btn.title = tip;
-    }
-
-    // Lock icon (non-default only)
-    if (board.id !== 'default') {
-      const lock = document.createElement('span');
-      lock.className = 'lock-board' + (board.locked ? ' locked' : '');
-      lock.textContent = board.locked ? '\uD83D\uDD12' : '\uD83D\uDD13';
-      lock.title = board.locked ? t('unlock') : t('lock');
-      lock.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (board.locked) {
-          openUnlockModal(board);
-        } else {
-          api('PUT', '/boards/' + board.id, { locked: true });
-        }
-      });
-      btn.appendChild(lock);
-    }
-
-    // Delete button (non-default, non-locked)
-    if (board.id !== 'default' && !board.locked) {
-      const del = document.createElement('span');
-      del.className = 'delete-board';
-      del.textContent = '\u00d7';
-      del.title = t('deleteTab');
-      del.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteBoard(board.id);
-      });
-      btn.appendChild(del);
     }
 
     // Tab drag & drop for reordering
@@ -1010,14 +1177,32 @@ function renderTabs() {
       selectBoard(board.id);
     });
 
-    nav.appendChild(btn);
-  });
+    btn.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = Array.from(nav.querySelectorAll('[role="tab"]'));
+      const index = tabs.indexOf(btn);
+      let nextIndex = index;
+      if (event.key === 'Home') nextIndex = 0;
+      if (event.key === 'End') nextIndex = tabs.length - 1;
+      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+      tabs[nextIndex]?.focus();
+    });
 
-  const addBtn = document.createElement('button');
-  addBtn.className = 'tab add-tab';
-  addBtn.textContent = t('newTab');
-  addBtn.addEventListener('click', openNewBoardModal);
-  nav.appendChild(addBtn);
+    item.appendChild(btn);
+    if (board.id !== 'default') {
+      const manage = document.createElement('button');
+      manage.type = 'button';
+      manage.className = 'tab-manage';
+      manage.textContent = '⋯';
+      manage.setAttribute('aria-haspopup', 'dialog');
+      manage.setAttribute('aria-label', t('boardMenu', { name: board.name }));
+      manage.addEventListener('click', () => openManageBoardModal(board, manage));
+      item.appendChild(manage);
+    }
+    nav.appendChild(item);
+  });
 
   // Animate newly added tabs
   const newBoardIds = new Set(boards.map(b => b.id));
@@ -1028,6 +1213,7 @@ function renderTabs() {
     }
   });
   renderedBoardIds = newBoardIds;
+  renderBoardSummary();
 }
 
 function expiryLabel(ms) {
@@ -1057,7 +1243,10 @@ function clipMatchesSearch(clip, query) {
 }
 
 function visibleClips() {
-  return clips.filter(clip => clipMatchesSearch(clip, searchQuery));
+  return clips.filter(clip => {
+    return (clipTypeFilter === 'all' || clip.type === clipTypeFilter)
+      && clipMatchesSearch(clip, searchQuery);
+  });
 }
 
 function clipLink(boardId, clipId) {
@@ -1083,7 +1272,10 @@ function clipTargetFromHash() {
 function focusClipElement(clipId) {
   const el = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
   if (!el) return false;
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  el.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
+  el.tabIndex = -1;
+  el.focus({ preventScroll: true });
   el.classList.add('clip-focused');
   setTimeout(() => el.classList.remove('clip-focused'), 1600);
   return true;
@@ -1099,9 +1291,11 @@ function focusClipFromHash() {
     }
     return;
   }
-  if (searchQuery) {
+  if (searchQuery || clipTypeFilter !== 'all') {
     searchQuery = '';
+    clipTypeFilter = 'all';
     $('#search-input').value = '';
+    $('#type-filter').value = 'all';
     renderClips();
   }
   requestAnimationFrame(() => {
@@ -1109,10 +1303,43 @@ function focusClipFromHash() {
   });
 }
 
+function appendLazyFilePreview(content, clip, extension, previewUrl) {
+  const isPdf = extension === 'pdf';
+  const isVideo = ['mp4', 'webm', 'mov', 'ogg'].includes(extension);
+  const isAudio = ['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(extension);
+  if (!isPdf && !isVideo && !isAudio) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'media-load-button';
+  button.textContent = t('loadPreview');
+  button.addEventListener('click', () => {
+    let media;
+    if (isPdf) {
+      media = document.createElement('iframe');
+      media.className = 'pdf-preview';
+      media.title = clip.originalName || t('file');
+    } else if (isVideo) {
+      media = document.createElement('video');
+      media.controls = true;
+      media.preload = 'metadata';
+      media.className = 'media-preview';
+    } else {
+      media = document.createElement('audio');
+      media.controls = true;
+      media.preload = 'metadata';
+      media.className = 'audio-preview';
+    }
+    media.src = previewUrl;
+    button.replaceWith(media);
+  }, { once: true });
+  content.appendChild(button);
+}
+
 function createClipElement(clip, boardId = currentBoardId) {
-  const el = document.createElement('div');
+  const el = document.createElement('li');
   el.className = 'clip';
   el.dataset.id = clip.id;
+  const article = document.createElement('article');
 
   // Header
   const header = document.createElement('div');
@@ -1120,23 +1347,32 @@ function createClipElement(clip, boardId = currentBoardId) {
   const typeLabel = document.createElement('span');
   const typeLabels = { image: t('image'), file: t('file'), text: t('text') };
   typeLabel.textContent = typeLabels[clip.type] || clip.type;
-  const time = document.createElement('span');
+  const time = document.createElement('time');
   time.textContent = timeAgo(clip.createdAt);
   time.dataset.ts = clip.createdAt;
+  time.dateTime = new Date(clip.createdAt).toISOString();
+  article.setAttribute('aria-label', `${typeLabel.textContent}, ${time.textContent}`);
   header.appendChild(typeLabel);
   header.appendChild(time);
-  el.appendChild(header);
+  article.appendChild(header);
 
   // Content
   const content = document.createElement('div');
   content.className = 'clip-content';
   if (clip.type === 'image') {
+    const link = document.createElement('a');
+    link.className = 'image-link';
+    link.href = clip.imageUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.setAttribute('aria-label', t('openImage'));
     const img = document.createElement('img');
     img.src = clip.imageUrl;
     img.alt = t('pastedImage');
     img.loading = 'lazy';
-    img.addEventListener('click', () => window.open(clip.imageUrl, '_blank'));
-    content.appendChild(img);
+    img.decoding = 'async';
+    link.appendChild(img);
+    content.appendChild(link);
   } else if (clip.type === 'file') {
     const previewUrl = clip.previewUrl || `${clip.fileUrl}/preview`;
     const fileInfo = document.createElement('div');
@@ -1155,25 +1391,7 @@ function createClipElement(clip, boardId = currentBoardId) {
     fileInfo.appendChild(sizeSpan);
     content.appendChild(fileInfo);
     const ext = (clip.originalName || '').toLowerCase().split('.').pop();
-    if (ext === 'pdf') {
-      const embed = document.createElement('embed');
-      embed.src = previewUrl;
-      embed.type = 'application/pdf';
-      embed.className = 'pdf-preview';
-      content.appendChild(embed);
-    } else if (['mp4', 'webm', 'mov', 'ogg'].includes(ext)) {
-      const video = document.createElement('video');
-      video.src = previewUrl;
-      video.controls = true;
-      video.className = 'media-preview';
-      content.appendChild(video);
-    } else if (['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(ext)) {
-      const audio = document.createElement('audio');
-      audio.src = previewUrl;
-      audio.controls = true;
-      audio.className = 'audio-preview';
-      content.appendChild(audio);
-    }
+    appendLazyFilePreview(content, clip, ext, previewUrl);
   } else {
     const pre = document.createElement('pre');
     const highlighted = highlight.highlightedTextWithLinks(clip.content);
@@ -1206,7 +1424,7 @@ function createClipElement(clip, boardId = currentBoardId) {
     // Link previews
     renderLinkPreviews(content, clip.content);
   }
-  el.appendChild(content);
+  article.appendChild(content);
 
   // Actions
   const actions = document.createElement('div');
@@ -1263,27 +1481,36 @@ function createClipElement(clip, boardId = currentBoardId) {
     actions.appendChild(delBtn);
   }
 
-  el.appendChild(actions);
+  article.appendChild(actions);
+  el.appendChild(article);
   return el;
 }
 
 function renderClips() {
   const container = $('#clips');
   const nextClips = visibleClips();
+  container.setAttribute('aria-busy', 'false');
+  $('#result-count').textContent = t('results', { visible: nextClips.length, total: clips.length });
 
   if (!clips.length) {
     renderedClipIds.clear();
-    container.innerHTML = '<div class="empty-state">' + escapeHtml(t('empty')) + '</div>';
+    const item = document.createElement('li');
+    item.className = 'empty-state';
+    item.textContent = t('empty');
+    container.replaceChildren(item);
     return;
   }
 
   if (!nextClips.length) {
     renderedClipIds.clear();
-    container.innerHTML = '<div class="empty-state">' + escapeHtml(t('noSearchResults')) + '</div>';
+    const item = document.createElement('li');
+    item.className = 'empty-state';
+    item.textContent = t('noSearchResults');
+    container.replaceChildren(item);
     return;
   }
 
-  container.innerHTML = '';
+  container.replaceChildren();
   nextClips.forEach(clip => {
     container.appendChild(createClipElement(clip, currentBoardId));
   });
@@ -1291,6 +1518,10 @@ function renderClips() {
 }
 
 function insertClipAnimated(clip) {
+  if (!visibleClips().some(item => item.id === clip.id)) {
+    renderClips();
+    return;
+  }
   const container = $('#clips');
   const empty = container.querySelector('.empty-state');
   if (empty) empty.remove();
@@ -1299,6 +1530,7 @@ function insertClipAnimated(clip) {
   el.classList.add('clip-enter');
   container.prepend(el);
   renderedClipIds.add(clip.id);
+  $('#result-count').textContent = t('results', { visible: visibleClips().length, total: clips.length });
 }
 
 function startEditClip(boardId, clip, el) {
@@ -1361,9 +1593,32 @@ function startEditClip(boardId, clip, el) {
 
 // --- Clip actions ---
 
+async function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the selection-based copy method.
+    }
+  }
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.readOnly = true;
+  field.style.position = 'fixed';
+  field.style.inset = '0 auto auto -9999px';
+  document.body.appendChild(field);
+  field.select();
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch {}
+  field.remove();
+  if (copied) return;
+  window.prompt(t('copyFallback'), text);
+}
+
 async function copyClipLink(boardId, clipId, btn) {
   try {
-    await navigator.clipboard.writeText(clipLink(boardId, clipId));
+    await copyText(clipLink(boardId, clipId));
     showToast(t('linkCopied'));
     if (btn) {
       clearTimeout(btn._linkTimeout);
@@ -1382,8 +1637,11 @@ async function copyClipLink(boardId, clipId, btn) {
 async function copyClip(clip, btn) {
   try {
     if (clip.type === 'text') {
-      await navigator.clipboard.writeText(clip.content);
+      await copyText(clip.content);
     } else {
+      if (!window.isSecureContext || !navigator.clipboard?.write || !window.ClipboardItem) {
+        throw new Error(t('copyFailed'));
+      }
       await navigator.clipboard.write([
         new ClipboardItem({
           'image/png': fetch(clip.imageUrl)
@@ -1453,6 +1711,7 @@ document.addEventListener('dragenter', (e) => {
   e.preventDefault();
   dragCounter++;
   $('#drop-overlay').classList.add('visible');
+  $('#drop-overlay').setAttribute('aria-hidden', 'false');
 });
 
 document.addEventListener('dragleave', (e) => {
@@ -1462,6 +1721,7 @@ document.addEventListener('dragleave', (e) => {
   if (dragCounter <= 0) {
     dragCounter = 0;
     $('#drop-overlay').classList.remove('visible');
+    $('#drop-overlay').setAttribute('aria-hidden', 'true');
   }
 });
 
@@ -1475,6 +1735,7 @@ document.addEventListener('drop', (e) => {
   e.preventDefault();
   dragCounter = 0;
   $('#drop-overlay').classList.remove('visible');
+  $('#drop-overlay').setAttribute('aria-hidden', 'true');
 
   const boardId = currentBoardId;
   const files = Array.from(e.dataTransfer.files);
@@ -1506,7 +1767,7 @@ async function sendText() {
   } catch {
     // Keep the exact draft for retry, including leading and trailing whitespace.
   } finally {
-    sendButton.disabled = false;
+    sendButton.disabled = !!boards.find(board => board.id === currentBoardId)?.locked;
   }
 }
 
@@ -1521,6 +1782,11 @@ $('#send-btn').addEventListener('click', sendText);
 
 $('#search-input').addEventListener('input', (event) => {
   searchQuery = event.target.value.trim();
+  renderClips();
+});
+
+$('#type-filter').addEventListener('change', (event) => {
+  clipTypeFilter = event.target.value;
   renderClips();
 });
 
@@ -1602,39 +1868,73 @@ function showToast(msg) {
   const toast = document.createElement('div');
   toast.className = 'toast';
   toast.textContent = msg;
-  document.body.appendChild(toast);
+  ($('#toast-region') || document.body).appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('show'));
   setTimeout(() => {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
-  }, 2000);
+  }, 3500);
 }
 
 // --- New board modal ---
 
-function openNewBoardModal() {
+function openDialog(dialog, initialFocus, opener = document.activeElement) {
+  dialogOpeners.set(dialog, opener instanceof HTMLElement ? opener : null);
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  requestAnimationFrame(() => initialFocus?.focus());
+}
+
+function closeDialog(dialog) {
+  if (dialog.open && typeof dialog.close === 'function') dialog.close();
+  else {
+    dialog.removeAttribute('open');
+    const opener = dialogOpeners.get(dialog);
+    if (opener?.isConnected) opener.focus();
+  }
+}
+
+function prepareDialog(dialog) {
+  dialog.addEventListener('close', () => {
+    const opener = dialogOpeners.get(dialog);
+    dialogOpeners.delete(dialog);
+    if (opener?.isConnected) opener.focus();
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    const inside = event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    if (!inside) closeDialog(dialog);
+  });
+}
+
+function openNewBoardModal(event) {
   $('#modal-name').value = '';
   $('#modal-expires').value = '';
-  $('#new-board-modal').classList.add('visible');
-  setTimeout(() => $('#modal-name').focus(), 50);
+  openDialog($('#new-board-modal'), $('#modal-name'), event?.currentTarget);
 }
 
 function closeNewBoardModal() {
-  $('#new-board-modal').classList.remove('visible');
+  closeDialog($('#new-board-modal'));
 }
 
 $('#modal-cancel').addEventListener('click', closeNewBoardModal);
 
-$('#new-board-modal').addEventListener('click', (e) => {
-  if (e.target === $('#new-board-modal')) closeNewBoardModal();
-});
-
-$('#modal-create').addEventListener('click', () => {
+$('#modal-create').addEventListener('click', async () => {
   const name = $('#modal-name').value.trim();
   if (!name) return;
   const expiresIn = $('#modal-expires').value;
-  createBoard(name, expiresIn || null);
-  closeNewBoardModal();
+  const button = $('#modal-create');
+  button.disabled = true;
+  try {
+    await createBoard(name, expiresIn || null);
+    closeNewBoardModal();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $('#modal-name').addEventListener('keydown', (e) => {
@@ -1642,14 +1942,13 @@ $('#modal-name').addEventListener('keydown', (e) => {
     e.preventDefault();
     $('#modal-create').click();
   }
-  if (e.key === 'Escape') closeNewBoardModal();
 });
 
 // --- Unlock modal ---
 
 let unlockBoardId = null;
 
-function openUnlockModal(board) {
+function openUnlockModal(board, opener) {
   unlockBoardId = board.id;
   $('#unlock-title').textContent = t('unlockTitle');
   $('#unlock-prompt').textContent = t('unlockPrompt', { name: board.name });
@@ -1658,29 +1957,35 @@ function openUnlockModal(board) {
   $('#unlock-confirm').disabled = true;
   $('#unlock-confirm').textContent = t('unlock');
   $('#unlock-cancel').textContent = t('cancel');
-  $('#unlock-modal').classList.add('visible');
-  setTimeout(() => $('#unlock-input').focus(), 50);
+  openDialog($('#unlock-modal'), $('#unlock-input'), opener);
 }
 
 function closeUnlockModal() {
-  $('#unlock-modal').classList.remove('visible');
-  unlockBoardId = null;
+  closeDialog($('#unlock-modal'));
 }
 
 $('#unlock-cancel').addEventListener('click', closeUnlockModal);
-
-$('#unlock-modal').addEventListener('click', (e) => {
-  if (e.target === $('#unlock-modal')) closeUnlockModal();
-});
 
 $('#unlock-input').addEventListener('input', () => {
   $('#unlock-confirm').disabled = $('#unlock-input').value !== $('#unlock-input').dataset.expected;
 });
 
-$('#unlock-confirm').addEventListener('click', () => {
+$('#unlock-confirm').addEventListener('click', async () => {
   if (!unlockBoardId || $('#unlock-confirm').disabled) return;
-  api('PUT', '/boards/' + unlockBoardId, { locked: false });
-  closeUnlockModal();
+  const boardId = unlockBoardId;
+  const button = $('#unlock-confirm');
+  button.disabled = true;
+  try {
+    const updated = await api('PUT', '/boards/' + encodeURIComponent(boardId), { locked: false });
+    const index = boards.findIndex(board => board.id === boardId);
+    if (index !== -1) boards[index] = updated;
+    renderTabs();
+    renderClips();
+    closeUnlockModal();
+  } catch (error) {
+    showToast(error.message || t('boardUpdateError'));
+    button.disabled = false;
+  }
 });
 
 $('#unlock-input').addEventListener('keydown', (e) => {
@@ -1688,7 +1993,116 @@ $('#unlock-input').addEventListener('keydown', (e) => {
     e.preventDefault();
     $('#unlock-confirm').click();
   }
-  if (e.key === 'Escape') closeUnlockModal();
+});
+
+$('#unlock-modal').addEventListener('close', () => { unlockBoardId = null; });
+
+// --- Board management modal ---
+
+function configureManageBoardModal(board) {
+  const index = boards.findIndex(item => item.id === board.id);
+  $('#manage-title').textContent = t('manageBoard', { name: board.name });
+  $('#manage-name').value = board.name;
+  $('#manage-name').disabled = !!board.locked;
+  $('#manage-save').disabled = !!board.locked;
+  $('#manage-lock').textContent = board.locked ? t('unlock') : t('lock');
+  $('#manage-lock').disabled = false;
+  $('#manage-delete').disabled = !!board.locked;
+  $('#manage-left').disabled = index <= 1;
+  $('#manage-right').disabled = index === -1 || index >= boards.length - 1;
+}
+
+function openManageBoardModal(board, opener) {
+  manageBoardId = board.id;
+  configureManageBoardModal(board);
+  openDialog($('#manage-board-modal'), board.locked ? $('#manage-lock') : $('#manage-name'), opener);
+  if (!board.locked) requestAnimationFrame(() => $('#manage-name').select());
+}
+
+function closeManageBoardModal() {
+  closeDialog($('#manage-board-modal'));
+}
+
+function managedBoard() {
+  return boards.find(board => board.id === manageBoardId);
+}
+
+$('#manage-close').addEventListener('click', closeManageBoardModal);
+$('#manage-board-modal').addEventListener('close', () => { manageBoardId = null; });
+
+$('#manage-save').addEventListener('click', async () => {
+  const board = managedBoard();
+  const name = $('#manage-name').value.trim();
+  if (!board || board.locked || !name) return;
+  const button = $('#manage-save');
+  button.disabled = true;
+  try {
+    const updated = await api('PUT', '/boards/' + encodeURIComponent(board.id), { name });
+    const index = boards.findIndex(item => item.id === board.id);
+    if (index !== -1) boards[index] = updated;
+    renderTabs();
+    configureManageBoardModal(updated);
+  } catch (error) {
+    showToast(error.message || t('boardUpdateError'));
+  } finally {
+    button.disabled = !!managedBoard()?.locked;
+  }
+});
+
+$('#manage-name').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $('#manage-save').click();
+  }
+});
+
+$('#manage-lock').addEventListener('click', async () => {
+  const board = managedBoard();
+  if (!board) return;
+  if (board.locked) {
+    const opener = dialogOpeners.get($('#manage-board-modal'));
+    closeManageBoardModal();
+    openUnlockModal(board, opener);
+    return;
+  }
+  const button = $('#manage-lock');
+  button.disabled = true;
+  try {
+    const updated = await api('PUT', '/boards/' + encodeURIComponent(board.id), { locked: true });
+    const index = boards.findIndex(item => item.id === board.id);
+    if (index !== -1) boards[index] = updated;
+    renderTabs();
+    renderClips();
+    configureManageBoardModal(updated);
+  } catch (error) {
+    showToast(error.message || t('boardUpdateError'));
+    button.disabled = false;
+  }
+});
+
+async function moveManagedBoard(direction) {
+  const board = managedBoard();
+  if (!board) return;
+  const index = boards.findIndex(item => item.id === board.id);
+  const target = boards[index + direction];
+  if (!target || target.id === 'default') return;
+  await reorderBoard(board.id, target.id);
+  const updated = managedBoard();
+  if (updated) configureManageBoardModal(updated);
+}
+
+$('#manage-left').addEventListener('click', () => moveManagedBoard(-1));
+$('#manage-right').addEventListener('click', () => moveManagedBoard(1));
+
+$('#manage-delete').addEventListener('click', async () => {
+  const board = managedBoard();
+  if (!board || board.locked) return;
+  try {
+    const deleted = await deleteBoard(board.id);
+    if (deleted) closeManageBoardModal();
+  } catch (error) {
+    showToast(error.message || t('boardDeleteError'));
+  }
 });
 
 // --- Init ---
@@ -1697,12 +2111,37 @@ stripTokenFromUrl();
 initTheme();
 $('#theme-toggle').addEventListener('click', toggleTheme);
 updateStaticTexts();
+showSecureContextWarning();
+updateNotificationButton();
+renderConnectionStatus();
+
+[$('#new-board-modal'), $('#unlock-modal'), $('#manage-board-modal')].forEach(prepareDialog);
+$('#add-board-btn').addEventListener('click', openNewBoardModal);
+$('#retry-btn').addEventListener('click', () => {
+  if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();
+  ws = null;
+  setApiState('loading');
+  connectWS();
+  syncFromServer();
+});
+$('#notification-btn').addEventListener('click', async () => {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try { await Notification.requestPermission(); } catch {}
+  updateNotificationButton();
+});
+
 connectWS();
 syncFromServer();
 
-if ('Notification' in window && Notification.permission === 'default') {
-  Notification.requestPermission();
-}
+window.addEventListener('offline', () => {
+  setWsState('offline');
+  renderConnectionStatus();
+});
+
+window.addEventListener('online', () => {
+  connectWS();
+  syncFromServer();
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
@@ -1713,6 +2152,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('focus', syncAfterResume);
+window.addEventListener('beforeunload', () => saveDraft(currentBoardId, $('#text-input').value));
 window.addEventListener('hashchange', () => {
   focusedClipHash = '';
   focusClipFromHash();
@@ -1733,5 +2173,7 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 // --- Service Worker ---
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+  navigator.serviceWorker.register('/sw.js').catch((error) => {
+    console.warn('Service worker registration failed:', error);
+  });
 }

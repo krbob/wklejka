@@ -18,48 +18,81 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
+  <a class="skip-link" href="#main-content">Przejdź do treści</a>
+  <header class="app-header">
     <div class="header-left">
       <h1>Wklejka</h1>
       <span class="subtitle">schowek w sieci</span>
     </div>
     <div class="header-right">
-      <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme"></button>
-      <div id="status" class="status offline"></div>
+      <button id="notification-btn" class="header-button" type="button" hidden>Powiadomienia</button>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Zmień motyw"></button>
+      <div id="status" class="connection-status connecting" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true" hidden></span>
+        <span id="status-text" hidden>Łączenie…</span>
+      </div>
+      <button id="retry-btn" class="header-button" type="button" hidden>Ponów</button>
     </div>
   </header>
 
-  <nav id="tabs"></nav>
+  <section id="secure-warning" class="notice notice-warning" role="alert" hidden></section>
 
-  <main>
-    <div class="paste-area">
+  <div class="board-bar">
+    <nav id="tabs" role="tablist" aria-label="Karty schowka"></nav>
+    <button id="add-board-btn" class="add-board-btn" type="button" hidden>+ Nowa karta</button>
+  </div>
+
+  <main id="main-content" tabindex="-1">
+    <section id="board-panel" role="tabpanel" tabindex="0">
+      <section id="board-summary" class="board-summary" aria-live="polite">
+      <h2 id="board-heading">Schowek</h2>
+      <div id="board-badges" class="board-badges"></div>
+      </section>
+
+      <section class="paste-area" aria-labelledby="composer-heading">
+      <h2 id="composer-heading" class="visually-hidden">Dodaj wpis</h2>
+      <label class="visually-hidden" for="text-input">Treść wpisu</label>
       <textarea id="text-input" placeholder="Wpisz lub wklej tekst tutaj..." rows="3"></textarea>
       <div class="paste-actions">
         <span class="hint">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
         <div class="paste-buttons">
-          <button id="file-btn" class="btn btn-secondary">Za&#322;&#261;cz plik</button>
+          <button id="file-btn" class="btn btn-secondary" type="button">Za&#322;&#261;cz plik</button>
           <input id="file-input" type="file" multiple hidden>
-          <button id="send-btn" class="btn btn-primary">Wy&#347;lij</button>
+          <button id="send-btn" class="btn btn-primary" type="button">Wy&#347;lij</button>
         </div>
       </div>
-    </div>
+      </section>
 
-    <div id="uploading"></div>
-    <div class="clip-toolbar">
-      <input id="search-input" type="search" autocomplete="off" placeholder="Szukaj wpis&oacute;w">
-    </div>
-    <div id="clips"></div>
+      <section id="uploading" class="upload-list" aria-label="Przesyłane pliki" aria-live="polite"></section>
+      <div class="clip-toolbar">
+      <label class="search-field">
+        <span class="visually-hidden">Szukaj wpisów</span>
+        <input id="search-input" type="search" autocomplete="off" placeholder="Szukaj wpis&oacute;w">
+      </label>
+      <label class="filter-field">
+        <span id="type-filter-label">Typ</span>
+        <select id="type-filter">
+          <option value="all">Wszystkie</option>
+          <option value="text">Tekst</option>
+          <option value="image">Obrazki</option>
+          <option value="file">Pliki</option>
+        </select>
+      </label>
+      <output id="result-count" for="search-input type-filter" aria-live="polite"></output>
+      </div>
+      <ol id="clips" class="clip-list" aria-label="Wpisy"></ol>
+    </section>
   </main>
 
-  <div id="drop-overlay" class="drop-overlay">
+  <div id="drop-overlay" class="drop-overlay" aria-hidden="true">
     <div class="drop-overlay-content">
       <div class="drop-icon">&#128206;</div>
       <p>Upu&#347;&#263; obrazek tutaj</p>
     </div>
   </div>
 
-  <div id="new-board-modal" class="modal-overlay">
-    <div class="modal">
+  <dialog id="new-board-modal" class="modal-dialog" aria-labelledby="modal-title">
+    <form method="dialog" class="modal">
       <h2 id="modal-title">Nowa karta</h2>
       <label class="modal-label">
         <span id="modal-name-label">Nazwa</span>
@@ -76,25 +109,50 @@
         </select>
       </label>
       <div class="modal-actions">
-        <button id="modal-cancel" class="btn btn-secondary">Anuluj</button>
-        <button id="modal-create" class="btn btn-primary">Utw&oacute;rz</button>
+        <button id="modal-cancel" class="btn btn-secondary" type="button">Anuluj</button>
+        <button id="modal-create" class="btn btn-primary" type="button">Utw&oacute;rz</button>
       </div>
-    </div>
-  </div>
+    </form>
+  </dialog>
 
-  <div id="unlock-modal" class="modal-overlay">
-    <div class="modal">
+  <dialog id="unlock-modal" class="modal-dialog" aria-labelledby="unlock-title">
+    <form method="dialog" class="modal">
       <h2 id="unlock-title">Odblokuj kart&#281;</h2>
       <p id="unlock-prompt" class="unlock-prompt"></p>
       <label class="modal-label">
         <input id="unlock-input" type="text" autocomplete="off">
       </label>
       <div class="modal-actions">
-        <button id="unlock-cancel" class="btn btn-secondary">Anuluj</button>
-        <button id="unlock-confirm" class="btn btn-primary" disabled>Odblokuj</button>
+        <button id="unlock-cancel" class="btn btn-secondary" type="button">Anuluj</button>
+        <button id="unlock-confirm" class="btn btn-primary" type="button" disabled>Odblokuj</button>
       </div>
-    </div>
-  </div>
+    </form>
+  </dialog>
+
+  <dialog id="manage-board-modal" class="modal-dialog" aria-labelledby="manage-title">
+    <form method="dialog" class="modal">
+      <h2 id="manage-title">Zarządzaj kartą</h2>
+      <label id="manage-name-field" class="modal-label">
+        <span id="manage-name-label">Nazwa</span>
+        <input id="manage-name" type="text" autocomplete="off">
+      </label>
+      <div class="manage-actions">
+        <button id="manage-save" class="btn btn-primary" type="button">Zapisz nazwę</button>
+        <button id="manage-lock" class="btn btn-secondary" type="button">Zablokuj</button>
+        <div class="move-actions" role="group" aria-label="Zmień pozycję karty">
+          <button id="manage-left" class="btn btn-secondary" type="button">← W lewo</button>
+          <button id="manage-right" class="btn btn-secondary" type="button">W prawo →</button>
+        </div>
+        <button id="manage-delete" class="btn btn-danger" type="button">Usuń kartę</button>
+      </div>
+      <div class="modal-actions">
+        <button id="manage-close" class="btn btn-secondary" type="button">Zamknij</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="realtime-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
   <script src="highlight.js"></script>
   <script src="app.js"></script>
