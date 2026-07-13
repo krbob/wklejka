@@ -27,6 +27,16 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - wklejka-data:/app/data
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    stop_grace_period: 10s
     restart: unless-stopped
 
 volumes:
@@ -57,11 +67,13 @@ For a bind mount such as `./data:/app/data`, make the directory writable by UID/
 
 - Text, image, and file clips with paste, drag-and-drop, and streaming uploads up to 100 MB by default.
 - Real-time synchronization over an origin-checked WebSocket that shares the application's authentication policy.
-- Separate boards with rename, reorder, lock, expiry, search, and direct clip links.
+- Separate boards with rename, reorder, lock, expiry, search/type filters, direct clip links, and locally generated QR sharing.
+- Pinned and expiring clips, cursor pagination, bulk deletion, and configurable retention.
 - Copy, download, edit, delete, inline media previews, and lightweight syntax highlighting.
 - Responsive Polish/English interface, dark mode, accessible dialogs, status feedback, and keyboard navigation.
-- Atomic metadata snapshots, recovery backup, and startup cleanup of unreferenced media.
-- Rate limits, strict request validation, safe download headers, and SSRF protection for link previews.
+- Write-before-ack metadata snapshots, recovery backup, maintenance dry-runs, and orphan cleanup.
+- Rate limits, strict request validation, safe download headers, and SSRF protection plus bounded caching for link previews.
+- Auth-protected status, Prometheus metrics, and metadata export endpoints for operators.
 
 ## Configuration
 
@@ -74,6 +86,8 @@ Common settings:
 | `MAX_STORAGE_BYTES` | `5368709120` | Aggregate quota for referenced file and image bodies. |
 | `MAX_BOARDS` | `100` | Maximum number of boards. |
 | `MAX_TOTAL_CLIPS` | `50000` | Maximum number of clips across all boards. |
+| `DEFAULT_CLIPS_PAGE_SIZE` | `50` | Default number of clips in a paginated response. |
+| `CLIP_RETENTION_MS` | `0` (disabled) | Age after which unpinned clips are removed. |
 | `AUTH_USERNAME`, `AUTH_PASSWORD` | unset | Enable HTTP Basic authentication when both are set. |
 | `AUTH_TOKEN` | unset | Enable bearer/cookie token authentication. |
 | `PUBLIC_ORIGIN` | inferred | Exact public origin allowed to open `/ws`, for example `https://clipboard.example.net`. |

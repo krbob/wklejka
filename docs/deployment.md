@@ -50,6 +50,8 @@ For a single proxy hop, configure:
 TRUST_PROXY=1
 PUBLIC_ORIGIN=https://clipboard.example.net
 AUTH_COOKIE_SECURE=true
+HSTS_MAX_AGE=31536000
+HSTS_INCLUDE_SUBDOMAINS=false
 ```
 
 `PUBLIC_ORIGIN` must be an exact origin: scheme, hostname, and optional non-default port, without a path. Use `PUBLIC_ORIGINS` with a comma-separated list only when several origins are genuinely required. The allowlist protects the WebSocket from cross-site connections.
@@ -57,6 +59,53 @@ AUTH_COOKIE_SECURE=true
 `TRUST_PROXY=1` means the direct peer is trusted to supply forwarding headers. Use it only when clients cannot bypass that proxy. For a different topology, set an explicit hop count or trusted address/range. Never use `TRUST_PROXY=true` on an Internet-reachable application port.
 
 Requests without an `Origin` header are rejected from WebSocket by default. `WS_ALLOW_NO_ORIGIN=true` is intended only for a controlled non-browser client and weakens cross-site protection.
+
+HSTS is emitted only when Wklejka recognizes the request as HTTPS, which requires correct proxy trust and `X-Forwarded-Proto`. Set `HSTS_MAX_AGE=0` while initially validating TLS if necessary. Do not enable `HSTS_INCLUDE_SUBDOMAINS` unless every current and future subdomain is HTTPS-capable.
+
+## Hardened Compose example
+
+The following example assumes Caddy runs on the same host and reaches the application through loopback. Replace `sha-REPLACE_ME` with a tested immutable image tag and put a random token in a mode-`0600` `.env` file.
+
+```bash
+umask 077
+printf 'AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+```
+
+```yaml
+services:
+  wklejka:
+    image: ghcr.io/krbob/wklejka:sha-REPLACE_ME
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
+      AUTH_COOKIE_SECURE: "true"
+      TRUST_PROXY: "1"
+      PUBLIC_ORIGIN: "https://clipboard.example.net"
+      MAX_STORAGE_BYTES: "5368709120"
+      LOG_REQUESTS: "true"
+      HSTS_MAX_AGE: "31536000"
+      HSTS_INCLUDE_SUBDOMAINS: "false"
+    volumes:
+      - wklejka-data:/app/data
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    stop_grace_period: 10s
+    restart: unless-stopped
+
+volumes:
+  wklejka-data:
+    name: wklejka-data
+```
+
+The image already runs as an unprivileged user. `read_only` protects the image filesystem while the named `/app/data` volume remains writable. The tmpfs is available for libraries that expect `/tmp`; it is non-executable and not persistent. Tune storage, memory, CPU, and proxy upload timeouts for your chosen upload limit.
 
 ## Caddy example
 
@@ -77,10 +126,11 @@ An equivalent nginx location must forward `Host`, `X-Forwarded-For`, `X-Forwarde
 
 - Permit inbound HTTPS only from the intended LAN, VPN, or Internet ranges. Keep the raw application port private.
 - Prefer an immutable `sha-*` image tag after testing it; `latest` is convenient but changes over time.
-- Run as the image's built-in non-root user and keep only `/app/data` writable.
+- Run as the image's built-in non-root user, drop capabilities, prevent privilege escalation, and keep only `/app/data` plus a small `/tmp` tmpfs writable.
 - Apply CPU, memory, process, and persistent-volume limits appropriate to `MAX_CLIP_BINARY_BYTES` and the number of active users.
 - Keep `WS_ALLOW_NO_ORIGIN=false`, use the smallest practical rate limits, and set `MAX_WS_CLIENTS`.
-- Treat `/healthz` as an unauthenticated liveness endpoint. It confirms that the HTTP process responds; it does not prove that storage is durable or has free space.
+- Use unauthenticated `/livez` for process liveness and `/readyz` for traffic readiness. `/healthz` remains a compatibility liveness alias. Readiness reflects durable-writer/shutdown state, not free disk capacity or backup freshness.
+- Keep `/api/status`, `/api/metrics`, `/api/export`, and maintenance behind authentication; they follow the application's auth policy and become public if auth is disabled.
 - Keep the host, reverse proxy, and container runtime patched. Review Renovate pull requests before deployment.
 
 ## Verification checklist
@@ -88,8 +138,10 @@ An equivalent nginx location must forward `Host`, `X-Forwarded-For`, `X-Forwarde
 After deployment:
 
 1. Confirm the browser reports a valid trusted certificate and a secure context.
-2. Confirm `https://your-host/healthz` returns `{"ok":true}`.
-3. Verify an unauthenticated `/api/boards` request is rejected.
+2. Confirm `/livez` returns `200`, then confirm `/readyz` returns `200` with storage ready.
+3. Verify an unauthenticated `/api/boards`, `/api/status`, and `/api/metrics` request is rejected.
 4. Open two authenticated browsers and verify real-time synchronization over `wss://`.
 5. Verify a connection with an unrelated `Origin` is rejected.
-6. Upload and download a small test file, then perform a backup and test its restore.
+6. Upload/download a small file and verify it appears in authenticated status/metrics.
+7. Preview a maintenance dry-run; do not run destructive cleanup as a connectivity test.
+8. Perform a full-volume backup and test its non-destructive restore. A metadata export alone is insufficient.
