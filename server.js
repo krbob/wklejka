@@ -64,6 +64,7 @@ const INLINE_FILE_EXT_TO_MIME = new Map([
   ['mp4', 'video/mp4'],
   ['webm', 'video/webm'],
 ]);
+const BINARY_DATA_URL_PATTERN = /^data:([a-zA-Z0-9!#$&^_.+-]{1,63}\/[a-zA-Z0-9!#$&^_.+-]{1,63})(?:;[^,\r\n]*)?;base64,([a-zA-Z0-9+/]*={0,2})$/;
 const MAX_LINK_PREVIEW_REDIRECTS = 5;
 const MAX_LINK_PREVIEW_BYTES = 64 * 1024;
 const DEFAULT_MAX_TEXT_CLIP_BYTES = 1024 * 1024;
@@ -192,7 +193,9 @@ function parsePublicOrigins(value) {
       if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin === 'null') continue;
       if (parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password) continue;
       origins.add(parsed.origin);
-    } catch {}
+    } catch {
+      // Ignore malformed allowlist entries and keep the valid origins.
+    }
   }
   return origins;
 }
@@ -329,6 +332,19 @@ function assertWithinUploadLimit(buffer) {
 
 function assertWithinTextLimit(text) {
   if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_CLIP_BYTES) throw createTextTooLargeError();
+}
+
+function decodeBinaryDataUrl(content, message, code) {
+  const match = content.match(BINARY_DATA_URL_PATTERN);
+  const payload = match?.[2] || '';
+  if (!match || match[0] !== content || !payload || payload.length % 4 !== 0) {
+    throw httpError(400, message, code);
+  }
+  const buffer = Buffer.from(payload, 'base64');
+  if (!buffer.length || buffer.toString('base64') !== payload) {
+    throw httpError(400, message, code);
+  }
+  return { mimeType: match[1].toLowerCase(), buffer };
 }
 
 function totalClipCount(candidateStore = store) {
@@ -752,6 +768,7 @@ let activeUploadBytes = 0;
 let shuttingDown = false;
 let mutationQueue = Promise.resolve();
 let lastWriterReady = true;
+const pendingBinaryPaths = new Set();
 
 function clipStoragePath(clip) {
   if (!clip?.filename) return null;
@@ -808,7 +825,9 @@ function fsyncDirectory(dir) {
     // Directory fsync is best-effort and can fail on some filesystems.
   } finally {
     if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch {}
+      try { fs.closeSync(fd); } catch {
+        // Preserve the original fsync/write failure.
+      }
     }
   }
 }
@@ -831,9 +850,13 @@ function writeFileAtomic(file, data) {
     fsyncDirectory(DATA_DIR);
   } catch (error) {
     if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch {}
+      try { fs.closeSync(fd); } catch {
+        // Preserve the original atomic-write failure.
+      }
     }
-    try { fs.unlinkSync(tmpFile); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch {
+      // Best-effort cleanup after the original failure.
+    }
     throw error;
   }
 }
@@ -1041,7 +1064,7 @@ function uploadMimeType(req) {
     throw httpError(400, 'Invalid Content-Type', 'INVALID_CONTENT_TYPE');
   }
   const mimeType = String(value || 'application/octet-stream').split(';', 1)[0].trim().toLowerCase();
-  if (!/^[a-z0-9!#$&^_.+\-]{1,63}\/[a-z0-9!#$&^_.+\-]{1,63}$/.test(mimeType)) {
+  if (!/^[a-z0-9!#$&^_.+-]{1,63}\/[a-z0-9!#$&^_.+-]{1,63}$/.test(mimeType)) {
     throw httpError(400, 'Invalid Content-Type', 'INVALID_CONTENT_TYPE');
   }
   return mimeType;
@@ -1156,9 +1179,12 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
   const filename = clipType === 'image' ? `${clip.id}.${ext}` : `${clip.id}_${safeName}`;
   const targetDir = clipType === 'image' ? IMAGES_DIR : FILES_DIR;
   const finalFile = path.join(targetDir, filename);
-  let tempFile = path.join(targetDir, `.upload-${process.pid}-${clip.id}.tmp`);
+  const tempFilePath = path.join(targetDir, `.upload-${process.pid}-${clip.id}.tmp`);
+  let tempFile = tempFilePath;
   let reservation;
   let committed = false;
+  pendingBinaryPaths.add(tempFilePath);
+  pendingBinaryPaths.add(finalFile);
 
   try {
     reservation = await receiveUpload(req, tempFile);
@@ -1197,6 +1223,8 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
     throw error;
   } finally {
     reservation?.release();
+    pendingBinaryPaths.delete(tempFilePath);
+    pendingBinaryPaths.delete(finalFile);
   }
 });
 
@@ -1508,12 +1536,13 @@ app.post('/api/boards/:id/clips', async (req, res) => {
 
   try {
     if (type === 'image') {
-      const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
-      if (!match) throw httpError(400, 'Invalid image data', 'INVALID_IMAGE_DATA');
-      const mimeType = match[1].toLowerCase();
+      const { mimeType, buffer } = decodeBinaryDataUrl(
+        content,
+        'Invalid image data',
+        'INVALID_IMAGE_DATA',
+      );
       const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
       if (!ext) throw httpError(400, 'Unsupported image type', 'UNSUPPORTED_IMAGE_TYPE');
-      const buffer = Buffer.from(match[2], 'base64');
       assertWithinUploadLimit(buffer);
       if (!imageSignatureMatches(mimeType, buffer.subarray(0, 16))) {
         throw httpError(400, 'Image content does not match MIME type', 'INVALID_IMAGE_DATA');
@@ -1521,6 +1550,7 @@ app.post('/api/boards/:id/clips', async (req, res) => {
       assertCanAddClip(store, id, buffer.length);
       const filename = `${clip.id}.${ext}`;
       binaryFile = path.join(IMAGES_DIR, filename);
+      pendingBinaryPaths.add(binaryFile);
       await fs.promises.writeFile(binaryFile, buffer, { flag: 'wx', mode: 0o600 });
       binarySize = buffer.length;
       clip.filename = filename;
@@ -1528,9 +1558,11 @@ app.post('/api/boards/:id/clips', async (req, res) => {
       clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
       clip.imageUrl = `/api/images/${filename}`;
     } else if (type === 'file') {
-      const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
-      if (!match) throw httpError(400, 'Invalid file data', 'INVALID_FILE_DATA');
-      const buffer = Buffer.from(match[2], 'base64');
+      const { mimeType, buffer } = decodeBinaryDataUrl(
+        content,
+        'Invalid file data',
+        'INVALID_FILE_DATA',
+      );
       assertWithinUploadLimit(buffer);
       assertCanAddClip(store, id, buffer.length);
       const originalName = body.originalName === undefined
@@ -1539,12 +1571,13 @@ app.post('/api/boards/:id/clips', async (req, res) => {
       const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
       const filename = `${clip.id}_${safeName}`;
       binaryFile = path.join(FILES_DIR, filename);
+      pendingBinaryPaths.add(binaryFile);
       await fs.promises.writeFile(binaryFile, buffer, { flag: 'wx', mode: 0o600 });
       binarySize = buffer.length;
       clip.filename = filename;
       clip.originalName = originalName;
       clip.size = buffer.length;
-      clip.mimeType = match[1].toLowerCase();
+      clip.mimeType = mimeType;
       clip.fileUrl = `/api/files/${filename}`;
       clip.previewUrl = `/api/files/${filename}/preview`;
     } else {
@@ -1560,6 +1593,8 @@ app.post('/api/boards/:id/clips', async (req, res) => {
   } catch (error) {
     if (binaryFile) await fs.promises.unlink(binaryFile).catch(() => {});
     throw error;
+  } finally {
+    if (binaryFile) pendingBinaryPaths.delete(binaryFile);
   }
 
   broadcast({ type: 'clip-added', boardId: id, clip });
@@ -2189,6 +2224,7 @@ function cleanOrphanFiles({ includeRecent = false, dryRun = false } = {}) {
     for (const f of files) {
       if (!referenced.has(f)) {
         const filepath = path.join(dir, f);
+        if (pendingBinaryPaths.has(filepath)) continue;
         let stat;
         try { stat = fs.statSync(filepath); } catch { continue; }
         if (!includeRecent && stat.mtimeMs > cutoff) continue;
@@ -2201,7 +2237,9 @@ function cleanOrphanFiles({ includeRecent = false, dryRun = false } = {}) {
           removed++;
           reclaimedBytes += size;
           console.log(`Orphan ${label} removed: ${f}`);
-        } catch {}
+        } catch {
+          // Online orphan cleanup is best-effort; retry on the next pass.
+        }
       }
     }
   }
@@ -2213,9 +2251,13 @@ function cleanOrphanFiles({ includeRecent = false, dryRun = false } = {}) {
           fs.unlinkSync(path.join(DATA_DIR, file));
           removed++;
           candidates++;
-        } catch {}
+        } catch {
+          // Startup temp-file cleanup is best-effort.
+        }
       }
-    } catch {}
+    } catch {
+      // A later maintenance pass can retry if the data directory is transiently unavailable.
+    }
   }
   if (removed) console.log(`Orphan cleanup: removed ${removed} file(s)`);
   return { candidates, removed, candidateBytes, reclaimedBytes };

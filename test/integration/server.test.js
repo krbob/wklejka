@@ -152,7 +152,9 @@ function rawHttpGet(app, pathname, headers = {}) {
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         let body = text;
-        try { body = JSON.parse(text); } catch {}
+        try { body = JSON.parse(text); } catch {
+          // Keep non-JSON responses as text for assertions.
+        }
         resolve({ body, headers: res.headers, status: res.statusCode || 0 });
       });
     });
@@ -215,7 +217,9 @@ function chunkedUpload(app, chunks, headers = {}) {
       res.on('end', () => {
         const text = Buffer.concat(body).toString('utf8');
         let parsed = text;
-        try { parsed = JSON.parse(text); } catch {}
+        try { parsed = JSON.parse(text); } catch {
+          // Keep non-JSON responses as text for assertions.
+        }
         resolve({ body: parsed, headers: res.headers, status: res.statusCode });
       });
     });
@@ -328,6 +332,137 @@ test('streaming uploads persist exact file and image bytes before acknowledging'
     [imageResult.body.filename],
     'a rejected image must not leave a temporary or final file',
   );
+});
+
+test('legacy data URL uploads require a canonical non-empty payload and valid MIME type', async (t) => {
+  const app = await startApp(t);
+  const fileBody = Buffer.from('legacy file bytes');
+  const file = await jsonRequest(app, '/api/boards/default/clips', 'POST', {
+    type: 'file',
+    content: `data:application/octet-stream;base64,${fileBody.toString('base64')}`,
+    originalName: 'legacy.bin',
+  });
+  assert.equal(file.status, 200);
+  assert.equal(file.body.mimeType, 'application/octet-stream');
+  const fileDownload = await fetch(`${app.url}${file.body.fileUrl}`);
+  assert.equal(fileDownload.status, 200);
+  assert.deepEqual(Buffer.from(await fileDownload.arrayBuffer()), fileBody);
+
+  const image = await jsonRequest(app, '/api/boards/default/clips', 'POST', {
+    type: 'image',
+    content: `data:image/png;base64,${PNG_1X1.toString('base64')}`,
+  });
+  assert.equal(image.status, 200);
+  assert.equal(image.body.mimeType, 'image/png');
+  const imageDownload = await fetch(`${app.url}${image.body.imageUrl}`);
+  assert.equal(imageDownload.status, 200);
+  assert.deepEqual(Buffer.from(await imageDownload.arrayBuffer()), PNG_1X1);
+
+  const malformed = [
+    'data:application;base64,AAAA',
+    'data:application/octet-stream;base64,',
+    'data:application/octet-stream;base64,A',
+    'data:application/octet-stream;base64,Zh==',
+    'data:application/octet-stream;base64,AAAA\n',
+  ];
+  for (const content of malformed) {
+    const result = await jsonRequest(app, '/api/boards/default/clips', 'POST', {
+      type: 'file',
+      content,
+    });
+    assert.equal(result.status, 400, content);
+    assert.equal(result.body.code, 'INVALID_FILE_DATA', content);
+  }
+});
+
+test('online orphan cleanup preserves a final binary waiting for its durable commit', async (t) => {
+  const app = await startApp(t, {
+    ORPHAN_GRACE_MS: '0',
+    STORE_SAVE_DEBOUNCE_MS: '500',
+    STORE_SAVE_MAX_WAIT_MS: '500',
+  });
+  const fileBody = Buffer.from('pending durable file');
+  const uploadPromise = jsonRequest(app, '/api/boards/default/clips', 'POST', {
+    type: 'file',
+    content: `data:application/octet-stream;base64,${fileBody.toString('base64')}`,
+    originalName: 'pending.bin',
+  });
+  const filesDir = path.join(app.dataDir, 'files');
+  await waitFor(
+    async () => (await fs.promises.readdir(filesDir)).some(name => !name.startsWith('.upload-')),
+    'The final binary did not enter the durable-commit window',
+  );
+
+  const cleanup = await jsonRequest(app, '/api/maintenance/cleanup', 'POST', { dryRun: false });
+  assert.equal(cleanup.status, 200);
+  assert.equal(cleanup.body.matched.orphans, 0);
+
+  const uploaded = await uploadPromise;
+  assert.equal(uploaded.status, 200);
+  const download = await fetch(`${app.url}${uploaded.body.fileUrl}`);
+  assert.equal(download.status, 200);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), fileBody);
+});
+
+test('online orphan cleanup preserves an open streaming temporary file', async (t) => {
+  const app = await startApp(t, { ORPHAN_GRACE_MS: '0' });
+  let resolveUpload;
+  let rejectUpload;
+  const uploadResult = new Promise((resolve, reject) => {
+    resolveUpload = resolve;
+    rejectUpload = reject;
+  });
+  const req = http.request({
+    hostname: '127.0.0.1',
+    port: app.port,
+    path: '/api/boards/default/uploads',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Clip-Type': 'file',
+      'X-Original-Name': 'pending-stream.bin',
+    },
+  }, (res) => {
+    const chunks = [];
+    res.on('data', chunk => chunks.push(chunk));
+    res.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      let body = text;
+      try { body = JSON.parse(text); } catch {
+        // Keep a non-JSON failure response available to the assertion.
+      }
+      resolveUpload({ body, status: res.statusCode || 0 });
+    });
+  });
+  req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('Upload request timed out')));
+  req.once('error', rejectUpload);
+
+  const firstChunk = Buffer.alloc(1024, 1);
+  const secondChunk = Buffer.alloc(1024, 2);
+  try {
+    req.write(firstChunk);
+    const filesDir = path.join(app.dataDir, 'files');
+    await waitFor(
+      async () => (await fs.promises.readdir(filesDir)).some(name => name.startsWith('.upload-')),
+      'The server never opened the streaming temporary file',
+    );
+
+    const cleanup = await jsonRequest(app, '/api/maintenance/cleanup', 'POST', { dryRun: false });
+    assert.equal(cleanup.status, 200);
+    assert.equal(cleanup.body.matched.orphans, 0);
+    req.end(secondChunk);
+
+    const uploaded = await uploadResult;
+    assert.equal(uploaded.status, 200);
+    const download = await fetch(`${app.url}${uploaded.body.fileUrl}`);
+    assert.equal(download.status, 200);
+    assert.deepEqual(
+      Buffer.from(await download.arrayBuffer()),
+      Buffer.concat([firstChunk, secondChunk]),
+    );
+  } finally {
+    if (!req.destroyed) req.destroy();
+  }
 });
 
 test('streaming limits accept the boundary and clean up rejected chunked bodies', async (t) => {
