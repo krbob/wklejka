@@ -24,6 +24,7 @@ module.exports = [
       globals: globals.node,
     },
     rules: {
+      ...js.configs.recommended.rules,
       'no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
         caughtErrors: 'none',
@@ -43,6 +44,7 @@ module.exports = [
       },
     },
     rules: {
+      ...js.configs.recommended.rules,
       'no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
         caughtErrors: 'none',
