@@ -10,7 +10,9 @@ services:
     cap_drop:
       - ALL
     tmpfs:
-      - /tmp:size=16m,mode=1777
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    pids_limit: 100
+    stop_grace_period: 10s
     volumes:
       - wklejka-data:/app/data
     restart: unless-stopped
