@@ -5,7 +5,15 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force \
-  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+  && rm -rf \
+    /opt/yarn-v* \
+    /usr/local/lib/node_modules/corepack \
+    /usr/local/lib/node_modules/npm \
+    /usr/local/bin/corepack \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx \
+    /usr/local/bin/yarn \
+    /usr/local/bin/yarnpkg
 COPY --chown=node:node server.js ./
 COPY --chown=node:node lib/ ./lib/
 COPY --chown=node:node public/ ./public/
