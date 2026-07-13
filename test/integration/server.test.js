@@ -5,6 +5,7 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const qrcode = require('qrcode-generator');
 const test = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
 
@@ -137,12 +138,43 @@ async function request(app, pathname, options = {}) {
   return { body, headers: response.headers, status: response.status };
 }
 
+function rawHttpGet(app, pathname, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: app.port,
+      path: pathname,
+      method: 'GET',
+      headers,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let body = text;
+        try { body = JSON.parse(text); } catch {}
+        resolve({ body, headers: res.headers, status: res.statusCode || 0 });
+      });
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('HTTP request timed out')));
+    req.once('error', reject);
+    req.end();
+  });
+}
+
 async function jsonRequest(app, pathname, method, body, headers = {}) {
   return request(app, pathname, {
     method,
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
+}
+
+function qrSvg(value) {
+  const qr = qrcode(0, 'M');
+  qr.addData(value, 'Byte');
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
 }
 
 async function upload(app, data, {
@@ -763,4 +795,115 @@ test('metadata export and Prometheus metrics require auth and do not leak clip c
   assert.match(metrics.body, /^wklejka_clips 1$/m);
   assert.match(metrics.body, /^wklejka_http_requests_total\{method="GET",status="401"\} 2$/m);
   assert.doesNotMatch(metrics.body, /private metric sentinel/);
+});
+
+test('QR sharing renders only an authenticated, existing clip link without leaking auth', async (t) => {
+  const app = await startApp(t, {
+    AUTH_TOKEN: 'qr-integration-secret',
+    PUBLIC_ORIGIN: 'https://paste.example',
+  });
+  const authorization = { Authorization: 'Bearer qr-integration-secret' };
+  const clip = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'QR payload source' },
+    authorization,
+  );
+  assert.equal(clip.status, 200);
+
+  const endpoint = `/api/share/qr?boardId=default&clipId=${clip.body.id}&lang=pl`;
+  assert.equal((await request(app, endpoint)).status, 401);
+
+  const result = await request(app, endpoint, {
+    headers: { ...authorization, Host: 'attacker.invalid' },
+  });
+  const expectedLink = `https://paste.example/?lang=pl#clip=default:${clip.body.id}`;
+  assert.equal(result.status, 200);
+  assert.match(result.headers.get('content-type'), /^image\/svg\+xml/);
+  assert.equal(result.headers.get('cache-control'), 'no-store');
+  assert.equal(result.body, qrSvg(expectedLink));
+  assert.match(result.body, /^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  assert.doesNotMatch(result.body, /qr-integration-secret|attacker\.invalid/);
+});
+
+test('QR sharing rejects missing, invalid, unknown, and nonexistent targets', async (t) => {
+  const app = await startApp(t, { AUTH_TOKEN: 'qr-validation-secret' });
+  const authorization = { Authorization: 'Bearer qr-validation-secret' };
+  const clip = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'QR validation source' },
+    authorization,
+  );
+  assert.equal(clip.status, 200);
+
+  /** @type {Array<[string, number, string]>} */
+  const cases = [
+    ['/api/share/qr', 400, 'BAD_REQUEST'],
+    ['/api/share/qr?boardId=default', 400, 'BAD_REQUEST'],
+    ['/api/share/qr?clipId=missing', 400, 'BAD_REQUEST'],
+    [`/api/share/qr?boardId=default&clipId=${clip.body.id}&lang=de`, 400, 'INVALID_LANGUAGE'],
+    [`/api/share/qr?boardId=../default&clipId=${clip.body.id}`, 400, 'BAD_REQUEST'],
+    ['/api/share/qr?boardId=default&clipId=../missing', 400, 'BAD_REQUEST'],
+    [`/api/share/qr?boardId=default&clipId=${clip.body.id}&url=https://attacker.invalid`, 400, 'BAD_REQUEST'],
+    [`/api/share/qr?boardId=default&clipId=${clip.body.id}&token=qr-validation-secret`, 400, 'BAD_REQUEST'],
+    ['/api/share/qr?boardId=missing&clipId=missing', 404, 'BOARD_NOT_FOUND'],
+    ['/api/share/qr?boardId=default&clipId=missing', 404, 'CLIP_NOT_FOUND'],
+  ];
+  for (const [pathname, status, code] of cases) {
+    const result = await request(app, pathname, { headers: authorization });
+    assert.equal(result.status, status, pathname);
+    assert.equal(result.body.code, code, pathname);
+  }
+
+  const fallback = await request(
+    app,
+    `/api/share/qr?boardId=default&clipId=${clip.body.id}&lang=en`,
+    { headers: authorization },
+  );
+  assert.equal(fallback.status, 200);
+  assert.equal(
+    fallback.body,
+    qrSvg(`${app.url}/?lang=en#clip=default:${clip.body.id}`),
+  );
+  assert.doesNotMatch(fallback.body, /qr-validation-secret/);
+});
+
+test('QR sharing enforces an ambiguous public-origin allowlist against the request origin', async (t) => {
+  const app = await startApp(t, {
+    AUTH_TOKEN: 'qr-origin-secret',
+    PUBLIC_ORIGIN: 'https://one.example, https://two.example',
+    TRUST_PROXY: 'loopback',
+  });
+  const authorization = { Authorization: 'Bearer qr-origin-secret' };
+  const clip = await jsonRequest(
+    app,
+    '/api/boards/default/clips',
+    'POST',
+    { type: 'text', content: 'QR origin source' },
+    authorization,
+  );
+  assert.equal(clip.status, 200);
+  const endpoint = `/api/share/qr?boardId=default&clipId=${clip.body.id}`;
+
+  const rejected = await rawHttpGet(app, endpoint, {
+    ...authorization,
+    Host: 'attacker.invalid',
+    'X-Forwarded-Proto': 'https',
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.code, 'INVALID_REQUEST_ORIGIN');
+
+  const allowed = await rawHttpGet(app, endpoint, {
+    ...authorization,
+    Host: 'two.example',
+    'X-Forwarded-Proto': 'https',
+  });
+  assert.equal(allowed.status, 200);
+  assert.equal(
+    allowed.body,
+    qrSvg(`https://two.example/#clip=default:${clip.body.id}`),
+  );
 });

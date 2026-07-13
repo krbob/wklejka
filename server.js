@@ -9,6 +9,7 @@ const net = require('net');
 const crypto = require('crypto');
 const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
+const qrcode = require('qrcode-generator');
 const {
   clientAddress,
   compileTrustProxy,
@@ -213,6 +214,37 @@ function safeHostHeader(value) {
   } catch {
     return null;
   }
+}
+
+function publicRequestOrigin(req) {
+  if (CONFIGURED_PUBLIC_ORIGINS.size === 1) {
+    return CONFIGURED_PUBLIC_ORIGINS.values().next().value;
+  }
+
+  const host = safeHostHeader(req.headers.host);
+  const protocol = String(req.protocol || '').toLowerCase();
+  if (!host || !['http', 'https'].includes(protocol)) {
+    throw httpError(400, 'Invalid request origin', 'INVALID_REQUEST_ORIGIN');
+  }
+  const origin = `${protocol}://${host}`;
+  if (CONFIGURED_PUBLIC_ORIGINS.size && !CONFIGURED_PUBLIC_ORIGINS.has(origin)) {
+    throw httpError(400, 'Request origin is not allowed', 'INVALID_REQUEST_ORIGIN');
+  }
+  return origin;
+}
+
+function clipShareUrl(req, boardId, clipId, lang) {
+  const url = new URL('/', publicRequestOrigin(req));
+  if (lang) url.searchParams.set('lang', lang);
+  url.hash = `clip=${encodeURIComponent(boardId)}:${encodeURIComponent(clipId)}`;
+  return url.href;
+}
+
+function createQrSvg(value) {
+  const qr = qrcode(0, 'M');
+  qr.addData(value, 'Byte');
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
 }
 
 function findClipByFilename(filename) {
@@ -1272,6 +1304,29 @@ app.get('/api/export', (_req, res) => {
     boards: store.boards,
     clips: store.clips,
   });
+});
+
+app.get('/api/share/qr', (req, res) => {
+  const allowedQuery = new Set(['boardId', 'clipId', 'lang']);
+  const unknown = Object.keys(req.query).find(key => !allowedQuery.has(key));
+  if (unknown) throw httpError(400, `Unknown query parameter: ${unknown}`);
+
+  const boardId = assertSafeId(req.query.boardId, 'board id');
+  const clipId = assertSafeId(req.query.clipId, 'clip id');
+  const lang = req.query.lang;
+  if (lang !== undefined && (typeof lang !== 'string' || !['pl', 'en'].includes(lang))) {
+    throw httpError(400, 'lang must be pl or en', 'INVALID_LANGUAGE');
+  }
+
+  const boardClips = store.clips[boardId];
+  if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+  if (!boardClips.some(clip => clip.id === clipId)) {
+    throw httpError(404, 'Clip not found', 'CLIP_NOT_FOUND');
+  }
+
+  const svg = createQrSvg(clipShareUrl(req, boardId, clipId, lang));
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('image/svg+xml').send(svg);
 });
 
 app.post('/api/maintenance/cleanup', async (req, res) => {
