@@ -16,6 +16,7 @@ const {
 } = require('./lib/proxy');
 const { isPrivateAddress } = require('./lib/security');
 const { createDefaultStore, normalizeStore } = require('./lib/store');
+const { DurableStoreWriter } = require('./lib/durable-store');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -89,6 +90,9 @@ const MAX_BOARDS = readPositiveInt(process.env.MAX_BOARDS, 100);
 const MAX_CLIPS_PER_BOARD = readPositiveInt(process.env.MAX_CLIPS_PER_BOARD, 10_000);
 const MAX_TOTAL_CLIPS = readPositiveInt(process.env.MAX_TOTAL_CLIPS, 50_000);
 const MAX_STORAGE_BYTES = readPositiveInt(process.env.MAX_STORAGE_BYTES, 5 * 1024 * 1024 * 1024);
+const STORE_SAVE_DEBOUNCE_MS = readPositiveInt(process.env.STORE_SAVE_DEBOUNCE_MS, 20);
+const STORE_SAVE_MAX_WAIT_MS = readPositiveInt(process.env.STORE_SAVE_MAX_WAIT_MS, 200);
+const LOG_REQUESTS = boolEnv(process.env.LOG_REQUESTS, true);
 const MAX_BOARD_NAME_LENGTH = readPositiveInt(process.env.MAX_BOARD_NAME_LENGTH, 120);
 const MAX_ORIGINAL_NAME_LENGTH = readPositiveInt(process.env.MAX_ORIGINAL_NAME_LENGTH, 255);
 const MAX_WS_CLIENTS = readPositiveInt(process.env.MAX_WS_CLIENTS, 100);
@@ -271,24 +275,24 @@ function totalClipCount(candidateStore = store) {
   return Object.values(candidateStore.clips).reduce((total, clips) => total + clips.length, 0);
 }
 
-function assertCanAddBoard() {
-  if (store.boards.length >= MAX_BOARDS) {
+function assertCanAddBoard(candidateStore = store) {
+  if (candidateStore.boards.length >= MAX_BOARDS) {
     throw httpError(409, `Board limit reached (max ${MAX_BOARDS})`, 'BOARD_LIMIT_REACHED');
   }
 }
 
-function assertCanAddClip(boardId, additionalBytes = 0) {
-  const boardClips = store.clips[boardId];
+function assertCanAddClip(candidateStore, boardId, additionalBytes = 0, storageBytes = storedBinaryBytes) {
+  const boardClips = candidateStore.clips[boardId];
   if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
-  const board = store.boards.find(candidate => candidate.id === boardId);
+  const board = candidateStore.boards.find(candidate => candidate.id === boardId);
   if (board?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
   if (boardClips.length >= MAX_CLIPS_PER_BOARD) {
     throw httpError(409, `Clip limit reached for this board (max ${MAX_CLIPS_PER_BOARD})`, 'CLIP_LIMIT_REACHED');
   }
-  if (totalClipCount() >= MAX_TOTAL_CLIPS) {
+  if (totalClipCount(candidateStore) >= MAX_TOTAL_CLIPS) {
     throw httpError(409, `Total clip limit reached (max ${MAX_TOTAL_CLIPS})`, 'TOTAL_CLIP_LIMIT_REACHED');
   }
-  if (storedBinaryBytes + activeUploadBytes + additionalBytes > MAX_STORAGE_BYTES) {
+  if (storageBytes + activeUploadBytes + additionalBytes > MAX_STORAGE_BYTES) {
     throw httpError(507, `Storage quota exceeded (max ${formatBytes(MAX_STORAGE_BYTES)})`, 'STORAGE_QUOTA_EXCEEDED');
   }
 }
@@ -593,10 +597,12 @@ async function fetchPreviewResponse(urlString, redirectsLeft = MAX_LINK_PREVIEW_
 // --- Store ---
 
 let store = { boards: [], clips: {} };
-let saveTimeout = null;
 let storeDirty = false;
 let storedBinaryBytes = 0;
 let activeUploadBytes = 0;
+let shuttingDown = false;
+let mutationQueue = Promise.resolve();
+let lastWriterReady = true;
 
 function clipStoragePath(clip) {
   if (!clip?.filename) return null;
@@ -715,9 +721,6 @@ function loadStore() {
 }
 
 function saveStoreNow(force = false) {
-  clearTimeout(saveTimeout);
-  saveTimeout = null;
-
   if (!force && !storeDirty) return;
 
   try {
@@ -729,29 +732,59 @@ function saveStoreNow(force = false) {
   }
 }
 
-function saveStore() {
-  storeDirty = true;
-  clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    try {
-      saveStoreNow();
-    } catch (e) {
-      console.error('Failed to save store:', e.message);
-    }
-  }, 200);
-}
-
-function flushStore() {
-  if (!storeDirty) return;
-  try {
-    saveStoreNow();
-  } catch (e) {
-    console.error('Failed to flush store:', e.message);
-  }
-}
-
 loadStore();
 storedBinaryBytes = calculateStoredBinaryBytes();
+
+const storeWriter = new DurableStoreWriter({
+  file: STORE_FILE,
+  backupFile: STORE_BACKUP_FILE,
+  debounceMs: STORE_SAVE_DEBOUNCE_MS,
+  maxWaitMs: STORE_SAVE_MAX_WAIT_MS,
+  onStateChange(status) {
+    if (status.ready === lastWriterReady) return;
+    lastWriterReady = status.ready;
+    console.log(JSON.stringify({
+      level: status.ready ? 'info' : 'error',
+      event: 'store_readiness_changed',
+      ready: status.ready,
+      error: status.lastError?.code || null,
+    }));
+  },
+});
+
+function commitStoreMutation(mutator) {
+  const operation = mutationQueue.then(async () => {
+    if (shuttingDown) {
+      throw httpError(503, 'Server is shutting down', 'SHUTTING_DOWN');
+    }
+    const draft = structuredClone(store);
+    const context = { storedBinaryBytes };
+    const result = await mutator(draft, context);
+    try {
+      await storeWriter.enqueue(draft);
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'store_write_failed',
+        code: error.code || 'STORE_WRITE_FAILED',
+        message: error.message,
+      }));
+      const unavailable = httpError(503, 'Storage temporarily unavailable', 'STORAGE_UNAVAILABLE');
+      unavailable.cause = error;
+      throw unavailable;
+    }
+    store = draft;
+    storedBinaryBytes = Math.max(0, context.storedBinaryBytes);
+    return result;
+  });
+  mutationQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function flushStore() {
+  await mutationQueue;
+  await storeWriter.flush();
+}
 
 // --- Express ---
 
@@ -759,6 +792,11 @@ const app = express();
 app.set('trust proxy', TRUST_PROXY);
 app.disable('x-powered-by');
 app.use((req, res, next) => {
+  const incomingRequestId = req.headers['x-request-id'];
+  req.requestId = typeof incomingRequestId === 'string' && /^[a-zA-Z0-9._-]{1,128}$/.test(incomingRequestId)
+    ? incomingRequestId
+    : crypto.randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -766,9 +804,34 @@ app.use((req, res, next) => {
   if (req.path === '/healthz' || req.path === '/livez' || req.path === '/readyz' || req.path.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store');
   }
+  if (LOG_REQUESTS) {
+    const startedAt = process.hrtime.bigint();
+    res.on('finish', () => {
+      if (!req.path.startsWith('/api/') && res.statusCode < 400) return;
+      console.log(JSON.stringify({
+        level: res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info',
+        event: 'http_request',
+        requestId: req.requestId,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+        client: clientAddress(req, TRUST_PROXY_FN),
+      }));
+    });
+  }
   next();
 });
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.get(['/healthz', '/livez'], (_req, res) => res.json({ ok: true }));
+app.get('/readyz', (_req, res) => {
+  const writerStatus = storeWriter.status();
+  const ready = writerStatus.ready && !shuttingDown;
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
+    storage: writerStatus.ready ? 'ready' : 'unavailable',
+    code: shuttingDown ? 'SHUTTING_DOWN' : writerStatus.lastError?.code || null,
+  });
+});
 app.use(authMiddleware);
 app.use('/api/link-preview', createRateLimiter({
   limit: LINK_PREVIEW_RATE_LIMIT,
@@ -900,7 +963,7 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
   const contentLength = requestContentLength(req);
   if (contentLength === 0) throw httpError(400, 'Upload body required', 'EMPTY_UPLOAD');
   if (contentLength !== null && contentLength > MAX_CLIP_BINARY_BYTES) throw createFileTooLargeError();
-  assertCanAddClip(boardId, contentLength || 0);
+  assertCanAddClip(store, boardId, contentLength || 0);
 
   const clip = { id: generateId(), type: clipType, createdAt: Date.now() };
   const safeName = clipType === 'file'
@@ -920,8 +983,6 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
       throw httpError(400, 'Image content does not match Content-Type', 'INVALID_IMAGE_DATA');
     }
 
-    // Recheck mutable quotas and lock state after a potentially long upload.
-    assertCanAddClip(boardId);
     await fs.promises.rename(tempFile, finalFile);
     tempFile = null;
 
@@ -936,9 +997,13 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
       clip.previewUrl = `/api/files/${filename}/preview`;
     }
 
-    store.clips[boardId].unshift(clip);
-    storedBinaryBytes += reservation.size;
-    saveStore();
+    await commitStoreMutation((draft, context) => {
+      // Recheck mutable quotas and lock state after a potentially long upload.
+      // The current stream is already included in activeUploadBytes.
+      assertCanAddClip(draft, boardId, 0, context.storedBinaryBytes);
+      draft.clips[boardId].unshift(clip);
+      context.storedBinaryBytes += reservation.size;
+    });
     committed = true;
     broadcast({ type: 'clip-added', boardId, clip });
     res.json(clip);
@@ -959,10 +1024,33 @@ app.get('/api/boards', (_req, res) => {
   res.json(store.boards);
 });
 
-app.post('/api/boards', (req, res) => {
+app.get('/api/status', (_req, res) => {
+  const writerStatus = storeWriter.status();
+  res.json({
+    ok: writerStatus.ready && !shuttingDown,
+    uptimeSeconds: Math.floor(process.uptime()),
+    boards: store.boards.length,
+    clips: totalClipCount(),
+    websocketClients: clients?.size || 0,
+    storage: {
+      usedBytes: storedBinaryBytes,
+      activeUploadBytes,
+      maxBytes: MAX_STORAGE_BYTES,
+      persistence: writerStatus,
+    },
+    limits: {
+      maxBoards: MAX_BOARDS,
+      maxClipsPerBoard: MAX_CLIPS_PER_BOARD,
+      maxTotalClips: MAX_TOTAL_CLIPS,
+      maxBinaryBytes: MAX_CLIP_BINARY_BYTES,
+      maxTextBytes: MAX_TEXT_CLIP_BYTES,
+    },
+  });
+});
+
+app.post('/api/boards', async (req, res) => {
   const body = assertBodyObject(req.body, ['name', 'expiresIn']);
   const name = requiredString(body.name, 'Name', MAX_BOARD_NAME_LENGTH, { trim: true });
-  assertCanAddBoard();
   const board = { id: generateId(), name, createdAt: Date.now(), expiresAt: null };
   if (body.expiresIn !== undefined && body.expiresIn !== null && body.expiresIn !== '') {
     const expiresIn = Number(body.expiresIn);
@@ -971,77 +1059,93 @@ app.post('/api/boards', (req, res) => {
     }
     board.expiresAt = Date.now() + expiresIn;
   }
-  store.boards.push(board);
-  store.clips[board.id] = [];
-  saveStore();
+  await commitStoreMutation((draft) => {
+    assertCanAddBoard(draft);
+    draft.boards.push(board);
+    draft.clips[board.id] = [];
+  });
   broadcast({ type: 'board-added', board });
   res.json(board);
 });
 
-app.put('/api/boards/reorder', (req, res) => {
+app.put('/api/boards/reorder', async (req, res) => {
   const { ids } = assertBodyObject(req.body, ['ids']);
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
   ids.forEach(id => assertSafeId(id, 'board id'));
-  const currentIds = store.boards.map(board => board.id);
-  if (ids.length !== currentIds.length) {
-    return res.status(400).json({ error: 'ids must include every board exactly once' });
-  }
-  const uniqueIds = new Set(ids);
-  if (uniqueIds.size !== ids.length) {
-    return res.status(400).json({ error: 'ids must be unique' });
-  }
-  const knownIds = new Set(currentIds);
-  if (ids.some(id => !knownIds.has(id))) {
-    return res.status(400).json({ error: 'ids contain an unknown board' });
-  }
-  const boardById = new Map(store.boards.map(board => [board.id, board]));
-  store.boards = ids.map(id => boardById.get(id));
-  saveStore();
-  broadcast({ type: 'boards-reordered', ids: store.boards.map(b => b.id) });
+  await commitStoreMutation((draft) => {
+    const currentIds = draft.boards.map(board => board.id);
+    if (ids.length !== currentIds.length) {
+      throw httpError(400, 'ids must include every board exactly once');
+    }
+    const uniqueIds = new Set(ids);
+    if (uniqueIds.size !== ids.length) throw httpError(400, 'ids must be unique');
+    const knownIds = new Set(currentIds);
+    if (ids.some(id => !knownIds.has(id))) throw httpError(400, 'ids contain an unknown board');
+    const boardById = new Map(draft.boards.map(board => [board.id, board]));
+    draft.boards = ids.map(id => boardById.get(id));
+  });
+  broadcast({ type: 'boards-reordered', ids });
   res.json({ ok: true });
 });
 
-app.put('/api/boards/:id', (req, res) => {
+app.put('/api/boards/:id', async (req, res) => {
   const id = assertSafeId(req.params.id, 'board id');
   const body = assertBodyObject(req.body, ['name', 'locked']);
   if (!Object.keys(body).length) throw httpError(400, 'At least one field is required');
-  const board = store.boards.find(b => b.id === id);
-  if (!board) return res.status(404).json({ error: 'Board not found' });
-  if (body.name !== undefined) {
-    board.name = requiredString(body.name, 'Name', MAX_BOARD_NAME_LENGTH, { trim: true });
-  }
-  if (body.locked !== undefined) {
-    if (typeof body.locked !== 'boolean') throw httpError(400, 'locked must be a boolean');
-    board.locked = body.locked;
-  }
-  saveStore();
+  const board = await commitStoreMutation((draft) => {
+    const candidate = draft.boards.find(item => item.id === id);
+    if (!candidate) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+    if (body.name !== undefined) {
+      candidate.name = requiredString(body.name, 'Name', MAX_BOARD_NAME_LENGTH, { trim: true });
+    }
+    if (body.locked !== undefined) {
+      if (typeof body.locked !== 'boolean') throw httpError(400, 'locked must be a boolean');
+      candidate.locked = body.locked;
+    }
+    return candidate;
+  });
   broadcast({ type: 'board-updated', board });
   res.json(board);
 });
 
-function removeBoardData(id) {
-  store.boards = store.boards.filter(b => b.id !== id);
-  (store.clips[id] || []).forEach(clip => {
-    storedBinaryBytes = Math.max(0, storedBinaryBytes - clipDiskSize(clip));
-    if (clip.type === 'image' && clip.filename) {
-      try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
-    }
-    if (clip.type === 'file' && clip.filename) {
-      try { fs.unlinkSync(path.join(FILES_DIR, clip.filename)); } catch {}
-    }
-  });
-  delete store.clips[id];
+function boardFileData(candidateStore, id) {
+  return (candidateStore.clips[id] || [])
+    .map(clip => ({ filepath: clipStoragePath(clip), size: clipDiskSize(clip) }))
+    .filter(item => item.filepath);
 }
 
-app.delete('/api/boards/:id', (req, res) => {
+async function unlinkCommittedFiles(files) {
+  await Promise.all(files.map(async ({ filepath }) => {
+    try {
+      await fs.promises.unlink(filepath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        console.error(JSON.stringify({
+          level: 'warn',
+          event: 'orphan_cleanup_deferred',
+          file: path.basename(filepath),
+          message: error.message,
+        }));
+      }
+    }
+  }));
+}
+
+app.delete('/api/boards/:id', async (req, res) => {
   const id = assertSafeId(req.params.id, 'board id');
   if (id === 'default') return res.status(400).json({ error: 'Cannot delete default board' });
-  const board = store.boards.find(b => b.id === id);
-  if (board && board.locked) return res.status(403).json({ error: 'Board is locked' });
-  if (!store.boards.find(b => b.id === id)) return res.status(404).json({ error: 'Board not found' });
-  removeBoardData(id);
-  saveStore();
+  const files = await commitStoreMutation((draft, context) => {
+    const board = draft.boards.find(candidate => candidate.id === id);
+    if (!board) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+    if (board.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
+    const removedFiles = boardFileData(draft, id);
+    draft.boards = draft.boards.filter(candidate => candidate.id !== id);
+    delete draft.clips[id];
+    context.storedBinaryBytes -= removedFiles.reduce((total, item) => total + item.size, 0);
+    return removedFiles;
+  });
   broadcast({ type: 'board-deleted', boardId: id });
+  await unlinkCommittedFiles(files);
   res.json({ ok: true });
 });
 
@@ -1051,9 +1155,9 @@ app.get('/api/boards/:id/clips', (req, res) => {
   res.json(store.clips[id] || []);
 });
 
-app.post('/api/boards/:id/clips', (req, res) => {
+app.post('/api/boards/:id/clips', async (req, res) => {
   const id = assertSafeId(req.params.id, 'board id');
-  assertCanAddClip(id);
+  assertCanAddClip(store, id);
 
   const body = assertBodyObject(req.body, ['type', 'content', 'originalName']);
   const { type, content } = body;
@@ -1063,97 +1167,112 @@ app.post('/api/boards/:id/clips', (req, res) => {
   if (!['text', 'image', 'file'].includes(type)) return res.status(400).json({ error: 'Unsupported clip type' });
 
   const clip = { id: generateId(), type, createdAt: Date.now() };
+  let binaryFile = null;
+  let binarySize = 0;
 
-  if (type === 'image') {
-    const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
-    if (!match) return res.status(400).json({ error: 'Invalid image data' });
-    const mimeType = match[1].toLowerCase();
-    const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
-    if (!ext) return res.status(400).json({ error: 'Unsupported image type' });
-    const buffer = Buffer.from(match[2], 'base64');
-    assertWithinUploadLimit(buffer);
-    assertCanAddClip(id, buffer.length);
-    const filename = `${clip.id}.${ext}`;
-    fs.writeFileSync(path.join(IMAGES_DIR, filename), buffer);
-    clip.filename = filename;
-    clip.size = buffer.length;
-    clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
-    clip.imageUrl = `/api/images/${filename}`;
-    storedBinaryBytes += buffer.length;
-  } else if (type === 'file') {
-    const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
-    if (!match) return res.status(400).json({ error: 'Invalid file data' });
-    const buffer = Buffer.from(match[2], 'base64');
-    assertWithinUploadLimit(buffer);
-    assertCanAddClip(id, buffer.length);
-    const originalName = body.originalName === undefined
-      ? 'file'
-      : requiredString(body.originalName, 'originalName', MAX_ORIGINAL_NAME_LENGTH);
-    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filename = `${clip.id}_${safeName}`;
-    fs.writeFileSync(path.join(FILES_DIR, filename), buffer);
-    clip.filename = filename;
-    clip.originalName = originalName;
-    clip.size = buffer.length;
-    clip.mimeType = match[1].toLowerCase();
-    clip.fileUrl = `/api/files/${filename}`;
-    clip.previewUrl = `/api/files/${filename}/preview`;
-    storedBinaryBytes += buffer.length;
-  } else if (type === 'text') {
-    const text = String(content);
-    assertWithinTextLimit(text);
-    clip.content = text;
+  try {
+    if (type === 'image') {
+      const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
+      if (!match) throw httpError(400, 'Invalid image data', 'INVALID_IMAGE_DATA');
+      const mimeType = match[1].toLowerCase();
+      const ext = SAFE_IMAGE_MIME_TYPES.get(mimeType);
+      if (!ext) throw httpError(400, 'Unsupported image type', 'UNSUPPORTED_IMAGE_TYPE');
+      const buffer = Buffer.from(match[2], 'base64');
+      assertWithinUploadLimit(buffer);
+      if (!imageSignatureMatches(mimeType, buffer.subarray(0, 16))) {
+        throw httpError(400, 'Image content does not match MIME type', 'INVALID_IMAGE_DATA');
+      }
+      assertCanAddClip(store, id, buffer.length);
+      const filename = `${clip.id}.${ext}`;
+      binaryFile = path.join(IMAGES_DIR, filename);
+      await fs.promises.writeFile(binaryFile, buffer, { flag: 'wx', mode: 0o600 });
+      binarySize = buffer.length;
+      clip.filename = filename;
+      clip.size = buffer.length;
+      clip.mimeType = mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+      clip.imageUrl = `/api/images/${filename}`;
+    } else if (type === 'file') {
+      const match = content.match(/^data:([a-zA-Z0-9!#$&^_.+\-]{1,127})(?:;[^,]*)?;base64,([a-zA-Z0-9+/]+={0,2})$/);
+      if (!match) throw httpError(400, 'Invalid file data', 'INVALID_FILE_DATA');
+      const buffer = Buffer.from(match[2], 'base64');
+      assertWithinUploadLimit(buffer);
+      assertCanAddClip(store, id, buffer.length);
+      const originalName = body.originalName === undefined
+        ? 'file'
+        : downloadBasename(requiredString(body.originalName, 'originalName', MAX_ORIGINAL_NAME_LENGTH));
+      const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file';
+      const filename = `${clip.id}_${safeName}`;
+      binaryFile = path.join(FILES_DIR, filename);
+      await fs.promises.writeFile(binaryFile, buffer, { flag: 'wx', mode: 0o600 });
+      binarySize = buffer.length;
+      clip.filename = filename;
+      clip.originalName = originalName;
+      clip.size = buffer.length;
+      clip.mimeType = match[1].toLowerCase();
+      clip.fileUrl = `/api/files/${filename}`;
+      clip.previewUrl = `/api/files/${filename}/preview`;
+    } else {
+      assertWithinTextLimit(content);
+      clip.content = content;
+    }
+
+    await commitStoreMutation((draft, context) => {
+      assertCanAddClip(draft, id, binarySize, context.storedBinaryBytes);
+      draft.clips[id].unshift(clip);
+      context.storedBinaryBytes += binarySize;
+    });
+  } catch (error) {
+    if (binaryFile) await fs.promises.unlink(binaryFile).catch(() => {});
+    throw error;
   }
 
-  store.clips[id].unshift(clip);
-  saveStore();
   broadcast({ type: 'clip-added', boardId: id, clip });
   res.json(clip);
 });
 
-app.put('/api/boards/:boardId/clips/:clipId', (req, res) => {
+app.put('/api/boards/:boardId/clips/:clipId', async (req, res) => {
   const boardId = assertSafeId(req.params.boardId, 'board id');
   const clipId = assertSafeId(req.params.clipId, 'clip id');
   const body = assertBodyObject(req.body, ['content']);
-  const boardClips = store.clips[boardId];
-  if (!boardClips) return res.status(404).json({ error: 'Board not found' });
-  const lockedBoard = store.boards.find(b => b.id === boardId);
-  if (lockedBoard && lockedBoard.locked) return res.status(403).json({ error: 'Board is locked' });
-
-  const clip = boardClips.find(c => c.id === clipId);
-  if (!clip) return res.status(404).json({ error: 'Clip not found' });
-  if (clip.type !== 'text') return res.status(400).json({ error: 'Only text clips can be edited' });
-
   if (typeof body.content !== 'string') throw httpError(400, 'content must be a string');
   const content = body.content;
   if (!content.trim()) return res.status(400).json({ error: 'Content required' });
   assertWithinTextLimit(content);
 
-  clip.content = content;
-  clip.updatedAt = Date.now();
-  saveStore();
+  const clip = await commitStoreMutation((draft) => {
+    const boardClips = draft.clips[boardId];
+    if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+    const lockedBoard = draft.boards.find(board => board.id === boardId);
+    if (lockedBoard?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
+    const candidate = boardClips.find(item => item.id === clipId);
+    if (!candidate) throw httpError(404, 'Clip not found', 'CLIP_NOT_FOUND');
+    if (candidate.type !== 'text') throw httpError(400, 'Only text clips can be edited');
+    candidate.content = content;
+    candidate.updatedAt = Date.now();
+    return candidate;
+  });
   broadcast({ type: 'clip-updated', boardId, clip });
   res.json(clip);
 });
 
-app.delete('/api/boards/:boardId/clips/:clipId', (req, res) => {
+app.delete('/api/boards/:boardId/clips/:clipId', async (req, res) => {
   const boardId = assertSafeId(req.params.boardId, 'board id');
   const clipId = assertSafeId(req.params.clipId, 'clip id');
-  if (!store.clips[boardId]) return res.status(404).json({ error: 'Board not found' });
-  const lockedBoard = store.boards.find(b => b.id === boardId);
-  if (lockedBoard && lockedBoard.locked) return res.status(403).json({ error: 'Board is locked' });
-  const clip = store.clips[boardId].find(c => c.id === clipId);
-  if (!clip) return res.status(404).json({ error: 'Clip not found' });
-  storedBinaryBytes = Math.max(0, storedBinaryBytes - clipDiskSize(clip));
-  if (clip.type === 'image' && clip.filename) {
-    try { fs.unlinkSync(path.join(IMAGES_DIR, clip.filename)); } catch {}
-  }
-  if (clip.type === 'file' && clip.filename) {
-    try { fs.unlinkSync(path.join(FILES_DIR, clip.filename)); } catch {}
-  }
-  store.clips[boardId] = store.clips[boardId].filter(c => c.id !== clipId);
-  saveStore();
+  const files = await commitStoreMutation((draft, context) => {
+    const boardClips = draft.clips[boardId];
+    if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
+    const lockedBoard = draft.boards.find(board => board.id === boardId);
+    if (lockedBoard?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
+    const clip = boardClips.find(candidate => candidate.id === clipId);
+    if (!clip) throw httpError(404, 'Clip not found', 'CLIP_NOT_FOUND');
+    const filepath = clipStoragePath(clip);
+    const removedFiles = filepath ? [{ filepath, size: clipDiskSize(clip) }] : [];
+    draft.clips[boardId] = boardClips.filter(candidate => candidate.id !== clipId);
+    context.storedBinaryBytes -= removedFiles.reduce((total, item) => total + item.size, 0);
+    return removedFiles;
+  });
   broadcast({ type: 'clip-deleted', boardId, clipId });
+  await unlinkCommittedFiles(files);
   res.json({ ok: true });
 });
 
@@ -1415,34 +1534,63 @@ websocketHeartbeat.unref();
 
 // --- Expiry cleanup (every 60s) ---
 
-setInterval(() => {
+let expiryCleanupRunning = false;
+
+async function cleanupExpiredBoards() {
+  if (expiryCleanupRunning || shuttingDown) return;
   const now = Date.now();
-  const expired = store.boards.filter(b => b.expiresAt && now > b.expiresAt);
-  if (!expired.length) return;
-  expired.forEach(b => {
-    console.log(`Board expired: ${b.name} (${b.id})`);
-    removeBoardData(b.id);
-    broadcast({ type: 'board-deleted', boardId: b.id });
-  });
-  saveStore();
-}, 60000);
+  if (!store.boards.some(board => board.expiresAt && now > board.expiresAt)) return;
+  expiryCleanupRunning = true;
+  try {
+    const result = await commitStoreMutation((draft, context) => {
+      const expired = draft.boards.filter(board => board.expiresAt && now > board.expiresAt);
+      const ids = new Set(expired.map(board => board.id));
+      const files = expired.flatMap(board => boardFileData(draft, board.id));
+      draft.boards = draft.boards.filter(board => !ids.has(board.id));
+      for (const id of ids) delete draft.clips[id];
+      context.storedBinaryBytes -= files.reduce((total, item) => total + item.size, 0);
+      return { expired, files };
+    });
+    for (const board of result.expired) {
+      console.log(JSON.stringify({ level: 'info', event: 'board_expired', boardId: board.id }));
+      broadcast({ type: 'board-deleted', boardId: board.id });
+    }
+    await unlinkCommittedFiles(result.files);
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'expiry_cleanup_failed',
+      message: error.message,
+    }));
+  } finally {
+    expiryCleanupRunning = false;
+  }
+}
+
+const expiryCleanupTimer = setInterval(() => { void cleanupExpiredBoards(); }, 60_000);
+expiryCleanupTimer.unref();
 
 // --- Orphan file cleanup on startup ---
 
 function cleanOrphanFiles() {
+  const referencedImages = new Set();
   const referencedFiles = new Set();
   for (const clips of Object.values(store.clips)) {
     for (const clip of clips) {
-      if (clip.filename) referencedFiles.add(clip.filename);
+      if (clip.type === 'image' && clip.filename) referencedImages.add(clip.filename);
+      if (clip.type === 'file' && clip.filename) referencedFiles.add(clip.filename);
     }
   }
 
   let removed = 0;
-  for (const [dir, label] of [[IMAGES_DIR, 'image'], [FILES_DIR, 'file']]) {
+  for (const [dir, label, referenced] of [
+    [IMAGES_DIR, 'image', referencedImages],
+    [FILES_DIR, 'file', referencedFiles],
+  ]) {
     let files;
     try { files = fs.readdirSync(dir); } catch { continue; }
     for (const f of files) {
-      if (!referencedFiles.has(f)) {
+      if (!referenced.has(f)) {
         try {
           fs.unlinkSync(path.join(dir, f));
           removed++;
@@ -1451,6 +1599,15 @@ function cleanOrphanFiles() {
       }
     }
   }
+  try {
+    for (const file of fs.readdirSync(DATA_DIR)) {
+      if (!/^\.store-.*\.tmp$/.test(file)) continue;
+      try {
+        fs.unlinkSync(path.join(DATA_DIR, file));
+        removed++;
+      } catch {}
+    }
+  } catch {}
   if (removed) console.log(`Orphan cleanup: removed ${removed} file(s)`);
 }
 
@@ -1460,13 +1617,67 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Wklejka running at http://0.0.0.0:${PORT}`);
 });
 
+let shutdownPromise = null;
+
+function closeWebsockets() {
+  return new Promise((resolve) => {
+    const forceTimer = setTimeout(() => {
+      for (const ws of clients) ws.terminate();
+    }, 1000);
+    wss.close(() => {
+      clearTimeout(forceTimer);
+      resolve();
+    });
+    for (const ws of clients) {
+      try { ws.close(1001, 'Server shutting down'); } catch { ws.terminate(); }
+    }
+  });
+}
+
+function closeHttpServer() {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
 function shutdown(signal) {
-  console.log(`Received ${signal}, flushing store before shutdown`);
-  flushStore();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  if (shutdownPromise) {
+    console.error(JSON.stringify({ level: 'warn', event: 'forced_shutdown', signal }));
+    process.exit(1);
+  }
+
+  shuttingDown = true;
+  clearInterval(expiryCleanupTimer);
+  clearInterval(websocketHeartbeat);
+  console.log(JSON.stringify({ level: 'info', event: 'shutdown_started', signal }));
+
+  const forceTimer = setTimeout(() => {
+    for (const ws of clients) ws.terminate();
+    server.closeAllConnections?.();
+  }, 5000);
+
+  shutdownPromise = (async () => {
+    let exitCode = 0;
+    try {
+      // Stop accepting requests, close upgraded connections, let active HTTP
+      // requests settle, then flush the serialized mutation/store queues.
+      await Promise.all([closeHttpServer(), closeWebsockets()]);
+      await flushStore();
+      await storeWriter.close();
+    } catch (error) {
+      exitCode = 1;
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'shutdown_failed',
+        message: error.message,
+      }));
+    } finally {
+      clearTimeout(forceTimer);
+      console.log(JSON.stringify({ level: 'info', event: 'shutdown_complete', exitCode }));
+      process.exit(exitCode);
+    }
+  })();
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('beforeExit', flushStore);
