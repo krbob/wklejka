@@ -64,7 +64,7 @@ HSTS is emitted only when Wklejka recognizes the request as HTTPS, which require
 
 ## Hardened Compose example
 
-The following example assumes Caddy runs on the same host and reaches the application through loopback. Replace `sha-REPLACE_ME` with a tested immutable image tag and put a random token in a mode-`0600` `.env` file.
+The following example assumes Caddy runs on the same host and reaches the application through loopback. Replace `sha-REPLACE_ME` with the tested `sha-<full-git-sha>` tag produced by CI and put a random token in a mode-`0600` `.env` file. For registry-enforced immutability, deploy the corresponding multi-platform manifest digest (`ghcr.io/krbob/wklejka@sha256:...`) instead of any tag.
 
 ```bash
 umask 077
@@ -125,7 +125,7 @@ An equivalent nginx location must forward `Host`, `X-Forwarded-For`, `X-Forwarde
 ## Network and container hardening
 
 - Permit inbound HTTPS only from the intended LAN, VPN, or Internet ranges. Keep the raw application port private.
-- Prefer an immutable `sha-*` image tag after testing it; `latest` is convenient but changes over time.
+- Prefer a full commit-scoped `sha-*` tag after testing it, or pin the manifest digest when strict immutability is required. `latest` changes over time.
 - Run as the image's built-in non-root user, drop capabilities, prevent privilege escalation, and keep only `/app/data` plus a small `/tmp` tmpfs writable.
 - Apply CPU, memory, process, and persistent-volume limits appropriate to `MAX_CLIP_BINARY_BYTES` and the number of active users.
 - Keep `WS_ALLOW_NO_ORIGIN=false`, use the smallest practical rate limits, and set `MAX_WS_CLIENTS`.

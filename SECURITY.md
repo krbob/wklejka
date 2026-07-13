@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are made on the `main` branch and released in the newest container image. Older commits and immutable `sha-*` images do not receive backports. Upgrade to the latest tested image after reviewing its release or commit notes.
+Security fixes are made on the `main` branch and released in the newest container image. Older commits and commit-scoped `sha-<full-git-sha>` images do not receive backports. Upgrade to the latest tested image after reviewing its release or commit notes.
 
 ## Reporting a vulnerability
 
