@@ -252,9 +252,16 @@ jobs:
           [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
 
           # Unlock and delete should work
-          curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
+          UNLOCKED_BOARD=$(curl -fsS -X PUT "${base}/api/boards/${ID_A}" \
             -H 'Content-Type: application/json' \
-            -d '{"locked":false}' | grep -q '"locked":false'
+            -d '{"locked":false}')
+          UNLOCKED_BOARD="$UNLOCKED_BOARD" python3 - <<'PY'
+          import json, os
+
+          board = json.loads(os.environ["UNLOCKED_BOARD"])
+          if board.get("locked", False) is not False:
+              raise SystemExit("Expected the board to be unlocked")
+          PY
           curl -fsS -X DELETE "${base}/api/boards/${ID_A}" | grep -q '"ok"'
 
           echo "Board rename, reorder, and lock tests passed"
