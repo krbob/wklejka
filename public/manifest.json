@@ -1,7 +1,7 @@
 {
   "name": "Wklejka",
   "short_name": "Wklejka",
-  "description": "Schowek w sieci",
+  "description": "Shared clipboard for text, images, and files",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#6366f1",

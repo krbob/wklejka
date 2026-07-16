@@ -1,123 +1,106 @@
-# wklejka
+# Wklejka
 
 [![CI](https://img.shields.io/github/actions/workflow/status/krbob/wklejka/ci.yml?branch=main&label=CI)](https://github.com/krbob/wklejka/actions/workflows/ci.yml)
+[![Container](https://img.shields.io/badge/container-ghcr.io-2496ED?logo=docker&logoColor=white)](https://github.com/krbob/wklejka/pkgs/container/wklejka)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2f855a)](LICENSE)
 
-Lightweight, self-hosted clipboard for moving text, images, and files between your devices. Wklejka has no accounts or cloud dependency: one Node.js process serves the UI and API, persists data on disk, and synchronizes open browsers over WebSocket.
+Wklejka is a self-hosted shared clipboard for moving text, images, and files between your browser, phone, and computer in real time. It needs no native client or cloud service: one small Node.js process serves the browser/PWA, stores data on your disk, and synchronizes connected devices over WebSocket.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="screenshot-dark.png">
-  <img src="screenshot.png" alt="Wklejka showing a shared clipboard in light mode">
-</picture>
+<img src="screenshot.png" alt="Wklejka interface with boards, a composer, search and type filters, and pinned shared clips">
 
-## Security model
+## Highlights
 
-Clipboard contents are often sensitive. Wklejka is intended for a trusted household or small team and is not a multi-tenant service. Keep the application behind a firewall, enable authentication, and use HTTPS whenever another device connects.
+### Everyday use
 
-Plain HTTP is suitable only for `localhost`. Browsers restrict clipboard access, notifications, and service workers on an insecure LAN origin such as `http://192.168.1.20:3000`. See [secure deployment](docs/deployment.md) before exposing Wklejka beyond the local machine.
+- Paste text or images, drag and drop files, and stream uploads up to 100 MB by default.
+- Organize clips into boards with search, type filters, cursor pagination, rename, reorder, expiry, and protection from accidental changes.
+- Pin important clips, set per-clip expiry, select and delete in bulk, and keep every open browser synchronized.
+- Copy, edit, download, or preview content; share a direct link or a locally generated QR code without sending clipboard data to a QR service.
+- Install the responsive PWA, use light or dark mode, and switch automatically between the Polish and English interface.
 
-## Quick start on one machine
+### Built for self-hosting
 
-Create `docker-compose.yml`:
+- Single-process architecture with ordinary JSON metadata and file storage—no external database or cloud account.
+- Optional deployment-wide Basic or token authentication, request limits, strict input validation, origin-checked WebSockets, and SSRF-resistant link previews.
+- Durable metadata snapshots, recovery copy, retention, maintenance dry-runs, orphan cleanup, and full-volume backup guidance.
+- Auth-aware status, Prometheus metrics, metadata export, liveness/readiness endpoints, and structured request logs.
+- Hardened multi-platform container images for `linux/amd64` and `linux/arm64`, scanned before publication.
 
-```yaml
-services:
-  wklejka:
-    image: ghcr.io/krbob/wklejka:latest
-    ports:
-      - "127.0.0.1:3000:3000"
-    volumes:
-      - wklejka-data:/app/data
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 100
-    stop_grace_period: 10s
-    restart: unless-stopped
+## Quick start on localhost
 
-volumes:
-  wklejka-data:
-    name: wklejka-data
-```
-
-Start the service and open <http://localhost:3000>:
+The following starts a hardened local evaluation instance and keeps its data in the `wklejka-data` Docker volume:
 
 ```bash
-docker compose up -d
-```
-
-The loopback port binding deliberately prevents other hosts from reaching the unencrypted service. For phone/tablet access, put it behind an HTTPS reverse proxy rather than changing the binding to `0.0.0.0`.
-
-The equivalent one-off command is:
-
-```bash
-docker run --rm \
+docker volume create wklejka-data
+docker run --rm --name wklejka \
+  --init \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 100 \
+  --stop-timeout 10 \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777 \
   -p 127.0.0.1:3000:3000 \
   -v wklejka-data:/app/data \
   ghcr.io/krbob/wklejka:latest
 ```
 
-For a bind mount such as `./data:/app/data`, make the directory writable by UID/GID `1000` used by the container.
+Open <http://localhost:3000>. Stop the foreground container with `Ctrl+C`; the named volume remains available for the next run. For a bind mount such as `./data:/app/data`, make the directory writable by UID/GID `1000` used by the image.
 
-## Features
+This command deliberately binds only to loopback and is for local use. The floating `latest` tag is convenient for evaluation but is not immutable.
 
-- Text, image, and file clips with paste, drag-and-drop, and streaming uploads up to 100 MB by default.
-- Real-time synchronization over an origin-checked WebSocket that shares the application's authentication policy.
-- Separate boards with rename, reorder, lock, expiry, search/type filters, direct clip links, and locally generated QR sharing.
-- Pinned and expiring clips, cursor pagination, bulk deletion, and configurable retention.
-- Copy, download, edit, delete, inline media previews, and lightweight syntax highlighting.
-- Responsive Polish/English interface, dark mode, accessible dialogs, status feedback, and keyboard navigation.
-- Write-before-ack metadata snapshots, recovery backup, maintenance dry-runs, and orphan cleanup.
-- Rate limits, strict request validation, safe download headers, and SSRF protection plus bounded caching for link previews.
-- Auth-protected status, Prometheus metrics, and metadata export endpoints for operators.
+## Secure access from other devices
 
-## Configuration
+Clipboard contents are often sensitive. For phone, tablet, LAN, VPN, or Internet access, deploy one instance behind HTTPS, enable authentication, keep the raw application port private, and pin a tested `sha-*` tag or manifest digest.
 
-Common settings:
+Use the tracked [production Compose file](compose.prod.yaml) with [.env.example](.env.example), then follow the [secure deployment guide](docs/deployment.md) for proxy and TLS configuration. Browsers restrict clipboard access, notifications, and service workers on insecure non-localhost origins.
+
+Wklejka is intended for a trusted household or small team, not mutually untrusted tenants. It has no user-account database: Basic or token authentication protects the whole deployment with a shared credential. Board locks prevent accidental mutations; they are not an authorization boundary.
+
+## Essential configuration
 
 | Variable | Default | Purpose |
 | --- | ---: | --- |
-| `MAX_CLIP_BINARY_BYTES` | `104857600` | Maximum size of one image or file. |
-| `MAX_TEXT_CLIP_BYTES` | `1048576` | Maximum UTF-8 size of one text clip. |
-| `MAX_STORAGE_BYTES` | `5368709120` | Aggregate quota for referenced file and image bodies. |
-| `MAX_BOARDS` | `100` | Maximum number of boards. |
-| `MAX_TOTAL_CLIPS` | `50000` | Maximum number of clips across all boards. |
-| `DEFAULT_CLIPS_PAGE_SIZE` | `50` | Default number of clips in a paginated response. |
-| `CLIP_RETENTION_MS` | `0` (disabled) | Age after which unpinned clips are removed. |
+| `AUTH_TOKEN` | unset | Enable bearer and HttpOnly-cookie token authentication. |
 | `AUTH_USERNAME`, `AUTH_PASSWORD` | unset | Enable HTTP Basic authentication when both are set. |
-| `AUTH_TOKEN` | unset | Enable bearer/cookie token authentication. |
-| `PUBLIC_ORIGIN` | inferred | Exact public origin allowed to open `/ws`, for example `https://clipboard.example.net`. |
+| `AUTH_COOKIE_SECURE` | `auto` | Set `true` behind HTTPS. |
+| `PUBLIC_ORIGIN` | inferred | Canonical HTTPS origin for WebSocket validation and shared links. |
 | `TRUST_PROXY` | disabled | Trusted reverse-proxy hop count or range; commonly `1`. |
+| `MAX_CLIP_BINARY_BYTES` | `104857600` | Maximum bytes in one image or file. |
+| `MAX_STORAGE_BYTES` | `5368709120` | Aggregate quota for referenced binary content. |
+| `CLIP_RETENTION_MS` | `0` | Age-based removal of unpinned clips; `0` disables it. |
 
-Application quotas complement rather than replace filesystem monitoring: metadata, recovery copies, and filesystem overhead also consume space. The complete environment reference, capacity guidance, and data layout are in [operations](docs/operations.md).
+See [operations](docs/operations.md) for the complete environment reference, capacity planning, maintenance, and data layout. Configuration changes require a process restart or container recreation.
+
+## Data, backups, and upgrades
+
+Metadata lives in `store.json`; uploaded images and files are stored separately under the data directory. `/api/export` is useful for inspection and migration tooling but does **not** contain media bodies and is not a complete backup.
+
+- [Consistent full-volume backup and non-destructive restore](docs/operations.md#consistent-full-backup)
+- [Upgrade, verification, and rollback procedure](docs/upgrading.md)
 
 ## Documentation
 
 - [Secure HTTPS/WSS deployment and authentication](docs/deployment.md)
-- [Configuration, quotas, backup, and restore](docs/operations.md)
-- [Architecture and scaling boundaries](docs/architecture.md)
-- [Security policy](SECURITY.md)
+- [Configuration, quotas, backup, restore, and maintenance](docs/operations.md)
+- [HTTP API and WebSocket reference](docs/api.md)
+- [Architecture, trust boundaries, and scaling limits](docs/architecture.md)
+- [Security policy and private vulnerability reporting](SECURITY.md)
 
 ## Development
 
-Node.js 24 and npm 11 are the supported development baseline.
+Node.js 24 and npm 11 are the tested development baseline.
 
 ```bash
 nvm use
 npm ci
 npm run check
-npm start
+DATA_DIR="$(mktemp -d)" npm start
 ```
 
-`npm run check` runs ESLint, JavaScript type checks, tests, and coverage thresholds. The service listens on <http://localhost:3000> by default; use a temporary `DATA_DIR` for manual experiments when you do not want to touch the normal data directory.
+`npm run check` runs ESLint, JavaScript type checks, tests, and scoped coverage thresholds for the core libraries and syntax highlighter. The native development server listens on all interfaces; do not run it without authentication on an untrusted network. The container quick start above keeps local evaluation bound to `127.0.0.1`.
 
-## UI language
-
-The UI follows `navigator.languages` and falls back to `navigator.language`. Override it with `?lang=pl` or `?lang=en`.
+The UI follows `navigator.languages`; override it with `?lang=pl` or `?lang=en`.
 
 ## License
 
