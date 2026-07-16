@@ -1,0 +1,31 @@
+name: wklejka
+
+services:
+  wklejka:
+    image: ${WKLEJKA_IMAGE:?Set WKLEJKA_IMAGE in .env}
+    env_file:
+      - ${WKLEJKA_ENV_FILE:-.env}
+    environment:
+      AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
+      AUTH_COOKIE_SECURE: "true"
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    ports:
+      - "127.0.0.1:${WKLEJKA_HOST_PORT:-3000}:3000"
+    volumes:
+      - wklejka-data:/app/data
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    stop_grace_period: 10s
+    restart: unless-stopped
+
+volumes:
+  wklejka-data:
+    name: ${WKLEJKA_DATA_VOLUME:-wklejka-data}

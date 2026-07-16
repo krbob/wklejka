@@ -2,7 +2,7 @@
 
 ## Recommended topology
 
-Run Wklejka as a single instance behind a trusted reverse proxy:
+Run one Wklejka instance behind a trusted reverse proxy:
 
 ```text
 browser -- HTTPS/WSS --> reverse proxy -- HTTP/WS --> wklejka:3000
@@ -10,13 +10,13 @@ browser -- HTTPS/WSS --> reverse proxy -- HTTP/WS --> wklejka:3000
                                       persistent volume
 ```
 
-TLS is required for normal browser clipboard and service-worker functionality on every host except `localhost`. The WebSocket endpoint is `/ws`; common reverse proxies, including Caddy and nginx, forward its upgrade automatically.
+TLS is required for normal browser clipboard, notification, and service-worker functionality on every host except `localhost`. The WebSocket endpoint is `/ws`. Caddy forwards WebSocket upgrades automatically; nginx requires the explicit HTTP/1.1 and upgrade headers shown below.
 
-Do not expose port 3000 publicly when a proxy is in front of it. Restrict it to loopback on a host installation or only `expose` it on a private container network.
+Do not expose port 3000 publicly when a proxy is in front of it. Bind it to loopback on a host installation or expose it only on a private container network.
 
 ## Authentication
 
-Choose at least one application authentication mode:
+Choose at least one deployment-wide authentication mode. Wklejka does not have per-user accounts or board-level authorization.
 
 ### HTTP Basic authentication
 
@@ -27,7 +27,7 @@ AUTH_USERNAME=wklejka
 AUTH_PASSWORD=<a-long-random-password>
 ```
 
-Basic credentials accompany requests, so this mode must only be used over HTTPS.
+Setting only one leaves Basic authentication disabled. Basic credentials accompany requests, so use this mode only over HTTPS.
 
 ### Token authentication
 
@@ -38,13 +38,13 @@ AUTH_TOKEN=<at-least-32-random-bytes>
 AUTH_COOKIE_SECURE=true
 ```
 
-Opening `https://your-host/?token=<token>` once exchanges the token for an HttpOnly, `SameSite=Strict` cookie. The UI removes the query from browser history, but the initial URL can still appear in reverse-proxy access logs. Redact query strings or disable access logging for this route, and never send the URL through an untrusted service.
+Opening `https://your-host/?token=<token>` once exchanges the token for an HttpOnly, `SameSite=Strict` session cookie. The UI removes the query from the visible URL, but the initial request can still appear in browser history, proxy logs, monitoring, or copied links. Redact query strings or disable access logging for this bootstrap route.
 
-Generate secrets locally, for example with `openssl rand -base64 32`. Store the environment file with restrictive permissions (`chmod 600`) and do not commit it.
+Generate secrets locally, for example with `openssl rand -hex 32`. Store `.env` with mode `0600`, do not commit it, and rotate a shared credential when someone should lose access. There is no logout endpoint; clearing site data removes the browser cookie, while rotating `AUTH_TOKEN` invalidates all existing token cookies.
 
-## Reverse-proxy settings
+## Reverse-proxy trust and public origin
 
-For a single proxy hop, configure:
+For a single proxy hop, use:
 
 ```dotenv
 TRUST_PROXY=1
@@ -54,62 +54,46 @@ HSTS_MAX_AGE=31536000
 HSTS_INCLUDE_SUBDOMAINS=false
 ```
 
-`PUBLIC_ORIGIN` must be an exact origin: scheme, hostname, and optional non-default port, without a path. Use `PUBLIC_ORIGINS` with a comma-separated list only when several origins are genuinely required. The allowlist protects the WebSocket from cross-site connections.
+`PUBLIC_ORIGIN` must be one exact HTTP(S) origin—scheme, hostname, and optional non-default port, without credentials, query, or path. It validates browser WebSockets and becomes the canonical base for direct links and QR sharing. Use `PUBLIC_ORIGINS` with a comma-separated list only when several origins are genuinely required; shared links then use the validated request origin because no single canonical origin exists. Malformed entries are ignored, so verify the resulting WebSocket and QR behavior after every change.
 
-`TRUST_PROXY=1` means the direct peer is trusted to supply forwarding headers. Use it only when clients cannot bypass that proxy. For a different topology, set an explicit hop count or trusted address/range. Never use `TRUST_PROXY=true` on an Internet-reachable application port.
+`TRUST_PROXY=1` means the direct peer is trusted to supply forwarding headers. Use it only when clients cannot bypass that proxy. For another topology, set an explicit hop count or trusted address/range. Never use `TRUST_PROXY=true` on an Internet-reachable application port.
 
 Requests without an `Origin` header are rejected from WebSocket by default. `WS_ALLOW_NO_ORIGIN=true` is intended only for a controlled non-browser client and weakens cross-site protection.
 
 HSTS is emitted only when Wklejka recognizes the request as HTTPS, which requires correct proxy trust and `X-Forwarded-Proto`. Set `HSTS_MAX_AGE=0` while initially validating TLS if necessary. Do not enable `HSTS_INCLUDE_SUBDOMAINS` unless every current and future subdomain is HTTPS-capable.
 
-## Hardened Compose example
+## Production Compose profile
 
-The following example assumes Caddy runs on the same host and reaches the application through loopback. Replace `sha-REPLACE_ME` with the tested `sha-<full-git-sha>` tag produced by CI and put a random token in a mode-`0600` `.env` file. For registry-enforced immutability, deploy the corresponding multi-platform manifest digest (`ghcr.io/krbob/wklejka@sha256:...`) instead of any tag.
+The repository contains a canonical [production Compose file](../compose.prod.yaml) and [.env template](../.env.example). The profile requires token authentication, binds the raw service to loopback, persists `/app/data`, and applies the same runtime hardening exercised by CI.
 
 ```bash
-umask 077
-printf 'AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+cp .env.example .env
+chmod 600 .env
+openssl rand -hex 32
 ```
 
-```yaml
-services:
-  wklejka:
-    image: ghcr.io/krbob/wklejka:sha-REPLACE_ME
-    ports:
-      - "127.0.0.1:3000:3000"
-    environment:
-      AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
-      AUTH_COOKIE_SECURE: "true"
-      TRUST_PROXY: "1"
-      PUBLIC_ORIGIN: "https://clipboard.example.net"
-      MAX_STORAGE_BYTES: "5368709120"
-      LOG_REQUESTS: "true"
-      HSTS_MAX_AGE: "31536000"
-      HSTS_INCLUDE_SUBDOMAINS: "false"
-    volumes:
-      - wklejka-data:/app/data
-    init: true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=16m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 100
-    stop_grace_period: 10s
-    restart: unless-stopped
+Edit `.env` and replace:
 
-volumes:
-  wklejka-data:
-    name: wklejka-data
+- `WKLEJKA_IMAGE` with a tested full `sha-<git-sha>` tag or manifest digest;
+- `AUTH_TOKEN` with the generated secret;
+- `PUBLIC_ORIGIN` with the public HTTPS origin;
+- `WKLEJKA_HOST_PORT` or capacity settings when needed.
+
+Then validate and start:
+
+```bash
+docker compose -f compose.prod.yaml config --quiet
+docker compose -f compose.prod.yaml pull
+docker compose -f compose.prod.yaml up -d
 ```
 
-The image already runs as an unprivileged user. `read_only` protects the image filesystem while the named `/app/data` volume remains writable. The tmpfs is available for libraries that expect `/tmp`; it is non-executable and not persistent. Tune storage, memory, CPU, and proxy upload timeouts for your chosen upload limit.
+The image runs as UID/GID `1000`. `read_only` protects the image filesystem while the named `/app/data` volume remains writable. The `/tmp` tmpfs is non-executable and ephemeral. The public multi-platform tag supports `linux/amd64` and `linux/arm64`.
+
+For a registry-enforced immutable deployment, prefer `ghcr.io/krbob/wklejka@sha256:...` over a tag. `latest` changes after every successful `main` publication and is intended only for convenient evaluation.
 
 ## Caddy example
 
-Keep the application bound to `127.0.0.1:3000`, set the variables above, and use:
+Keep Wklejka bound to `127.0.0.1:3000`, use the proxy/origin variables above, and configure:
 
 ```caddyfile
 clipboard.example.net {
@@ -120,28 +104,67 @@ clipboard.example.net {
 
 Caddy obtains and renews a public certificate when DNS points at the host. For a private name, use an internal CA only if its root certificate is installed and trusted on every client; an untrusted certificate does not create a browser secure context.
 
-An equivalent nginx location must forward `Host`, `X-Forwarded-For`, `X-Forwarded-Proto`, `Upgrade`, and `Connection`, and should apply request and idle timeouts that accommodate the configured upload size and long-lived WebSocket.
+## nginx example
+
+The `map` belongs in the nginx `http` context. The `server` block shows the forwarding settings relevant to Wklejka; add your normal TLS certificate configuration.
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name clipboard.example.net;
+
+    # Covers the default 100 MB streaming upload. Raise this with
+    # MAX_CLIP_BINARY_BYTES; legacy JSON/base64 clients need ~37% more.
+    client_max_body_size 110m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # Preserve streaming uploads and long-lived WebSockets.
+        proxy_request_buffering off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+}
+```
+
+Tune proxy/body/idle timeouts and infrastructure limits together with `MAX_CLIP_BINARY_BYTES`. A proxy can reject a request before application quotas are evaluated.
 
 ## Network and container hardening
 
 - Permit inbound HTTPS only from the intended LAN, VPN, or Internet ranges. Keep the raw application port private.
-- Prefer a full commit-scoped `sha-*` tag after testing it, or pin the manifest digest when strict immutability is required. `latest` changes over time.
-- Run as the image's built-in non-root user, drop capabilities, prevent privilege escalation, and keep only `/app/data` plus a small `/tmp` tmpfs writable.
-- Apply CPU, memory, process, and persistent-volume limits appropriate to `MAX_CLIP_BINARY_BYTES` and the number of active users.
-- Keep `WS_ALLOW_NO_ORIGIN=false`, use the smallest practical rate limits, and set `MAX_WS_CLIENTS`.
-- Use unauthenticated `/livez` for process liveness and `/readyz` for traffic readiness. `/healthz` remains a compatibility liveness alias. Readiness reflects durable-writer/shutdown state, not free disk capacity or backup freshness.
-- Keep `/api/status`, `/api/metrics`, `/api/export`, and maintenance behind authentication; they follow the application's auth policy and become public if auth is disabled.
-- Keep the host, reverse proxy, and container runtime patched. Review Renovate pull requests before deployment.
+- Use the image's built-in non-root user, drop capabilities, prevent privilege escalation, and keep only `/app/data` plus a small `/tmp` tmpfs writable.
+- Apply CPU, memory, process, and persistent-volume limits appropriate to the upload limit and number of active users.
+- Keep `WS_ALLOW_NO_ORIGIN=false`, use practical request limits, and set `MAX_WS_CLIENTS` for the deployment size.
+- Use unauthenticated `/livez` for process liveness and `/readyz` for routing readiness. Readiness reflects writer/shutdown state, not free disk capacity or backup freshness.
+- Status, metrics, export, and maintenance follow the shared auth policy; they are public when authentication is disabled.
+- Link-preview requests leave the Wklejka host, so destination sites can observe its source IP and requested domain. Disable or restrict use at the network layer if that does not fit the threat model.
+- Keep the host, proxy, and container runtime patched. Review Renovate changes and image scan results before deployment.
 
 ## Verification checklist
 
 After deployment:
 
-1. Confirm the browser reports a valid trusted certificate and a secure context.
-2. Confirm `/livez` returns `200`, then confirm `/readyz` returns `200` with storage ready.
-3. Verify an unauthenticated `/api/boards`, `/api/status`, and `/api/metrics` request is rejected.
+1. Confirm the browser reports a valid trusted certificate and secure context.
+2. Confirm `/livez` and `/readyz` return `200`.
+3. Verify unauthenticated `/api/boards`, `/api/status`, `/api/metrics`, and `/api/export` requests are rejected.
 4. Open two authenticated browsers and verify real-time synchronization over `wss://`.
-5. Verify a connection with an unrelated `Origin` is rejected.
+5. Verify a WebSocket connection with an unrelated `Origin` is rejected.
 6. Upload/download a small file and verify it appears in authenticated status/metrics.
-7. Preview a maintenance dry-run; do not run destructive cleanup as a connectivity test.
-8. Perform a full-volume backup and test its non-destructive restore. A metadata export alone is insufficient.
+7. Verify a direct link and QR code use `PUBLIC_ORIGIN` and open the intended clip.
+8. Preview maintenance cleanup; do not execute destructive cleanup as a connectivity test.
+9. Perform a full-volume backup and test its non-destructive restore. Metadata export alone is insufficient.
+
+Use the [upgrade and rollback runbook](upgrading.md) for image changes.

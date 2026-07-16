@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are made on the `main` branch and released in the newest container image. Older commits and commit-scoped `sha-<full-git-sha>` images do not receive backports. Upgrade to the latest tested image after reviewing its release or commit notes.
+Security fixes are made on the `main` branch and released in the newest container image. Older commits and commit-scoped `sha-<full-git-sha>` images do not receive backports. Upgrade to a newer tested image after reviewing its commits and following the [upgrade and rollback runbook](docs/upgrading.md).
 
 ## Reporting a vulnerability
 
@@ -17,7 +17,7 @@ You should receive an acknowledgement within seven days. Investigation and remed
 
 ## Deployment responsibility
 
-Wklejka stores and broadcasts clipboard data to authenticated clients. It is not designed for mutually untrusted tenants. Operators are responsible for:
+Wklejka stores and broadcasts clipboard data to every client admitted by the configured deployment policy. Authentication is optional in the application but required for the recommended network deployment. Wklejka is not designed for mutually untrusted tenants. Operators are responsible for:
 
 - terminating TLS with a trusted certificate;
 - enabling strong authentication and protecting credentials;

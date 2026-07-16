@@ -2,20 +2,20 @@
 
 ## Environment reference
 
-Integer values use base 10. Most limits must be positive; settings explicitly described as “`0` disables” accept zero. Invalid values fall back to their defaults.
+Numeric settings are parsed as base-10 integers. Most limits must be positive; settings explicitly described as “`0` disables” accept zero. Use plain decimal strings: malformed values generally fall back to defaults, while `PORT` and Boolean settings follow separate parsing paths. Configuration is read at process start, so changes require a restart or container recreation.
 
 ### Process, authentication, and proxy
 
 | Variable | Default | Notes |
 | --- | ---: | --- |
-| `PORT` | `3000` | HTTP listener inside the container. |
-| `DATA_DIR` | `/app/data` in the image | Metadata and media root. Mount persistent storage here. |
+| `PORT` | `3000` | HTTP listener on `0.0.0.0` inside the container. Update the proxy/port mapping when changing it. |
+| `DATA_DIR` | `/app/data` in the image | Metadata and media root. Update the persistent mount when changing it. |
 | `AUTH_USERNAME` + `AUTH_PASSWORD` | unset | Enables Basic authentication when both are non-empty. |
 | `AUTH_TOKEN` | unset | Enables bearer and HttpOnly-cookie token authentication. |
 | `AUTH_COOKIE_SECURE` | `auto` | `true`, `false`, or `auto`; use `true` behind HTTPS. |
 | `TRUST_PROXY` | disabled | Express proxy trust setting; prefer an explicit hop count/range. |
-| `PUBLIC_ORIGIN` | inferred from request | Exact WebSocket browser origin. |
-| `PUBLIC_ORIGINS` | unset | Comma-separated alternative to `PUBLIC_ORIGIN`. |
+| `PUBLIC_ORIGIN` | inferred from request | Exact WebSocket origin and canonical base for direct/QR links. |
+| `PUBLIC_ORIGINS` | unset | Comma-separated allowlist when several request origins are required. |
 | `LOG_REQUESTS` | `true` | Structured JSON request/error logs; set `false` to suppress normal request logs. |
 | `HSTS_MAX_AGE` | `31536000` | HSTS `max-age` seconds on requests recognized as HTTPS; `0` disables. |
 | `HSTS_INCLUDE_SUBDOMAINS` | `false` | Add `includeSubDomains` to HSTS; enable only if every subdomain is permanently HTTPS. |
@@ -46,7 +46,7 @@ Integer values use base 10. Most limits must be positive; settings explicitly de
 | Variable | Default | Notes |
 | --- | ---: | --- |
 | `STORE_SAVE_DEBOUNCE_MS` | `20` | Short delay before writing a pending metadata snapshot. |
-| `STORE_SAVE_MAX_WAIT_MS` | `200` | Maximum pending-batch wait; effectively never lower than the debounce. |
+| `STORE_SAVE_MAX_WAIT_MS` | `200` | Upper bound for a pending writer delay; effectively never lower than the debounce. |
 | `AUTH_RATE_LIMIT` | `20` | Failed authentication attempts per client per minute. |
 | `API_RATE_LIMIT` | `600` | API requests per client per minute. |
 | `LINK_PREVIEW_RATE_LIMIT` | `30` | Link-preview requests per client per minute. |
@@ -61,7 +61,7 @@ Integer values use base 10. Most limits must be positive; settings explicitly de
 
 ## Capacity and quotas
 
-Wklejka enforces limits for boards, clips, each payload, and aggregate bytes occupied by referenced images/files. Active streaming uploads reserve quota as bytes arrive. Requests that exceed the binary storage quota fail with HTTP `507`; count limits fail with `409`.
+Wklejka enforces limits for boards, clips, each payload, and aggregate bytes occupied by referenced images/files. Active streaming uploads reserve quota as bytes arrive. Requests that exceed the binary storage quota fail with HTTP `507`; board/clip capacity limits use `409`, while invalid page or bulk-request limits use `400`.
 
 `MAX_STORAGE_BYTES` is an application-level binary quota, not a filesystem reservation. It excludes `store.json`, recovery/corrupt copies, archive backups, and filesystem overhead. Set it below actual volume capacity and retain headroom for atomic metadata writes and operations.
 
@@ -105,7 +105,7 @@ Important retention rules:
 
 ## Durable persistence and readiness
 
-HTTP mutations are serialized and written to an atomic metadata snapshot before the server acknowledges or broadcasts them. `STORE_SAVE_DEBOUNCE_MS` permits a short batching window and `STORE_SAVE_MAX_WAIT_MS` bounds a pending batch; request callers still await the successful write.
+HTTP mutations are serialized and written to an atomic metadata snapshot before the server acknowledges or broadcasts them. `STORE_SAVE_DEBOUNCE_MS` delays the writer briefly and `STORE_SAVE_MAX_WAIT_MS` bounds that pending delay. The current mutation queue awaits every snapshot, so separate API mutations are not coalesced into one write.
 
 If persistence fails, the mutation is not published, the request returns `503`, and storage readiness remains failed until a later write succeeds. Graceful shutdown stops accepting work and flushes mutation, maintenance, and writer queues.
 
@@ -141,6 +141,8 @@ Preview URL fragments are removed before lookup. Successful results use `LINK_PR
 
 The cache is memory-only and per process. Set either TTL to `0` to disable that category. Cache counts and in-flight work are visible in `/api/status`; Prometheus exposes hits, misses, in-flight deduplications, and entry count.
 
+Each preview is an outbound request from the Wklejka host, so the destination can observe the deployment's source IP and requested domain. Private/non-routable targets are blocked; response parsing is capped at 64 KiB, redirects at five, and each HTTP hop at five seconds. DNS resolution can add delay. See the [API reference](api.md#media-qr-and-link-previews).
+
 ## Direct-link and QR sharing
 
 The UI can share an existing clip as a direct link or as a locally generated SVG QR code. QR generation follows the application's authentication policy and does not send the link or clipboard content to a third-party service. Configure `PUBLIC_ORIGIN` correctly behind a reverse proxy so generated links use the intended HTTPS origin.
@@ -152,37 +154,38 @@ The UI can share an existing clip as a direct link or as a locally generated SVG
 ```json
 {
   "dryRun": true,
-  "boardId": "default",
-  "olderThan": 1760000000000
+  "boardId": "default"
 }
 ```
 
 - `dryRun` defaults to `true`; always inspect the preview before sending `false`.
-- `boardId` optionally limits clip/board matching to one existing board.
+- `boardId` optionally limits clip/board matching to one existing board; orphan-file scanning remains global.
 - `olderThan` is an optional past Unix timestamp in milliseconds and affects only unpinned clips.
 
-The response separates `matched` from `deleted` counts for boards, clips, and orphan files and reports `reclaimedBytes`. Online orphan cleanup ignores files newer than `ORPHAN_GRACE_MS`; startup cleanup removes all media not referenced by the loaded store and stale metadata temp files.
+The response separates `matched` from `deleted` counts for boards, clips, and orphan files and reports `reclaimedBytes`. Online orphan cleanup ignores files newer than `ORPHAN_GRACE_MS`; startup cleanup removes all media not referenced by the loaded store and stale metadata temp files. A dry-run is not a transactional snapshot, so preview again immediately before execution when content may be changing.
 
 Example two-step operation:
 
 ```bash
+older_than=$(( $(date +%s) * 1000 - 30 * 24 * 60 * 60 * 1000 ))
+
 curl --fail --max-time 30 \
   -H "Authorization: Bearer $AUTH_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"dryRun":true}' \
+  -d "{\"dryRun\":true,\"olderThan\":${older_than}}" \
   https://your-host/api/maintenance/cleanup
 
 # After reviewing matched/reclaimedBytes:
 curl --fail --max-time 30 \
   -H "Authorization: Bearer $AUTH_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"dryRun":false}' \
+  -d "{\"dryRun\":false,\"olderThan\":${older_than}}" \
   https://your-host/api/maintenance/cleanup
 ```
 
 ## Metadata export is not a backup
 
-Authenticated `GET /api/export` downloads a versioned JSON document containing boards, text, and media metadata/references. It does **not** include the bytes stored under `files/` and `images/`. It is useful for inspection and migration tooling, but cannot restore a complete installation.
+`GET /api/export` downloads a versioned JSON document containing boards, text, and media metadata/references and follows configured application authentication. It does **not** include the bytes stored under `files/` and `images/`. It is useful for inspection and migration tooling, but cannot restore a complete installation.
 
 Treat exports as sensitive because they include text clip contents. For disaster recovery, back up the entire data directory as described below.
 
@@ -204,40 +207,50 @@ Malformed metadata may be preserved as `store.json.corrupt-<timestamp>`. The `.b
 
 Metadata and media are separate resources. Stop the application while taking a snapshot so they represent the same point in time.
 
-The commands below assume the Compose example from the README, whose volume has the explicit name `wklejka-data`:
+The commands below assume the production Compose profile and its default `wklejka-data` volume. They guarantee that the service is restarted even if archive creation fails and pin the helper image by digest:
 
 ```bash
+set -euo pipefail
 mkdir -p backups
 backup="wklejka-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+source_volume="wklejka-data"
 
-docker compose stop wklejka
+restart_wklejka() {
+  docker compose -f compose.prod.yaml start wklejka >/dev/null
+}
+trap restart_wklejka EXIT INT TERM
+
+docker compose -f compose.prod.yaml stop wklejka
 docker run --rm \
-  -v wklejka-data:/source:ro \
+  -v "$source_volume:/source:ro" \
   -v "$PWD/backups:/backup" \
-  alpine:3.22 \
+  alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
   tar -C /source -czf "/backup/$backup" .
-docker compose start wklejka
+
+restart_wklejka
+trap - EXIT INT TERM
 
 tar -tzf "backups/$backup" >/dev/null
+sha256sum "backups/$backup" > "backups/$backup.sha256"
 ```
 
-Copy the archive to separate storage and encrypt it. Define retention and periodically test restores. For a bind mount, stop the application and archive that directory with a tool that preserves names and permissions.
+Set `source_volume` to `WKLEJKA_DATA_VOLUME` when it differs from the default. Copy the archive and checksum to separate storage and encrypt them. Define retention and periodically test restores. For a bind mount, stop the application and archive that directory with a tool that preserves names and permissions.
 
 ## Non-destructive restore
 
-Restore into a new volume first, keeping the current one available for rollback:
+Restore into a new volume first, keeping the current service and volume available until cutover:
 
 ```bash
+set -euo pipefail
 archive="$PWD/backups/wklejka-YYYYMMDDTHHMMSSZ.tar.gz"
 restore_volume="wklejka-data-restored"
 
 tar -tzf "$archive" >/dev/null
-docker compose down
 docker volume create "$restore_volume"
 docker run --rm \
   -v "$restore_volume:/target" \
   -v "$(dirname "$archive"):/backup:ro" \
-  alpine:3.22 \
+  alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce \
   sh -eu -c '
     test -z "$(find /target -mindepth 1 -maxdepth 1 -print -quit)"
     tar -C /target -xzf "/backup/$1"
@@ -245,11 +258,19 @@ docker run --rm \
   ' -- "$(basename "$archive")"
 ```
 
-Change the Compose volume `name` from `wklejka-data` to `wklejka-data-restored`, start the service, inspect logs, and verify boards, text, images, and downloads. Keep the old volume until validation is complete. To roll back, stop the service and restore the old volume name.
+Set `WKLEJKA_DATA_VOLUME=wklejka-data-restored` in `.env`, then recreate the service at cutover:
+
+```bash
+docker compose -f compose.prod.yaml config --quiet
+docker compose -f compose.prod.yaml up -d --force-recreate wklejka
+docker compose -f compose.prod.yaml logs --since=5m wklejka
+```
+
+Verify readiness, authentication, boards, text, images, downloads, a new persisted mutation, WebSocket sync, and QR/direct links. Keep the old volume until validation completes. To roll back, restore the previous `WKLEJKA_DATA_VOLUME` and image reference, then recreate the service. See [upgrading and rollback](upgrading.md).
 
 ## Routine checks
 
-- `docker compose ps` and `docker compose logs --since=1h wklejka`
+- `docker compose -f compose.prod.yaml ps` and `docker compose -f compose.prod.yaml logs --since=1h wklejka`
 - `/livez` for process health and `/readyz` for serving readiness
 - authenticated `/api/status` and `/api/metrics`
 - persistent-volume bytes/inodes and backup age

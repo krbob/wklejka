@@ -7,7 +7,7 @@ Wklejka deliberately uses a small, single-process architecture:
 | Component | Responsibility |
 | --- | --- |
 | `server.js` | HTTP/API routing, authentication, validation, streaming media, retention/maintenance, link previews, metrics, and WebSocket fan-out. |
-| `lib/durable-store.js` | Debounced atomic metadata writer, waiter coordination, readiness state, and recovery-copy rotation. |
+| `lib/durable-store.js` | Delayed atomic metadata writer, waiter coordination, readiness state, and recovery-copy rotation. |
 | `lib/store.js` | Default-store creation and defensive normalization of metadata loaded from disk. |
 | `lib/security.js` | Private and non-routable IP detection used by link-preview SSRF controls. |
 | `lib/proxy.js` | Trusted-proxy parsing and consistent client-address selection. |
@@ -19,12 +19,12 @@ There is no frontend build step or framework. Express serves static assets and J
 ## Mutation and synchronization flow
 
 1. A trusted reverse proxy terminates TLS and forwards HTTP/WebSocket traffic.
-2. The server authenticates the request, applies per-client rate limits, and validates its payload.
+2. The server applies the configured authentication policy, per-client rate limits, and payload validation.
 3. A mutation is serialized behind earlier mutations and applied to a cloned metadata draft. Streaming media first lands in a private temporary file.
 4. The durable writer writes the draft to a temporary metadata file, syncs it, copies the previous `store.json` to `store.json.bak`, and atomically renames the new snapshot.
 5. Only after that write succeeds does the server publish the draft in memory, acknowledge the HTTP request, and broadcast the event. A failed write returns `503` without exposing the draft; `/readyz` remains unavailable until a later successful write.
 
-`STORE_SAVE_DEBOUNCE_MS` controls the short batching delay and `STORE_SAVE_MAX_WAIT_MS` bounds how long a pending batch waits. Callers still await the completed durable write. Graceful shutdown stops new work, closes HTTP and WebSocket connections, finishes maintenance, and flushes the mutation/writer queues.
+`STORE_SAVE_DEBOUNCE_MS` controls the short writer delay and `STORE_SAVE_MAX_WAIT_MS` bounds how long a pending snapshot waits. The mutation queue awaits every durable snapshot, so separate API mutations are not currently coalesced. Graceful shutdown stops new work, closes HTTP and WebSocket connections, finishes maintenance, and flushes the mutation/writer queues.
 
 Binary clients use the raw streaming upload route, avoiding base64 copies in browser and server memory. Download routes derive safe response headers from stored metadata. Potentially active file types are attachments unless explicitly allowlisted for inline preview.
 
@@ -60,7 +60,7 @@ The UI can turn an existing clip's direct link into an SVG QR code. The server v
 
 ## Link-preview boundary and cache
 
-Remote link-preview targets are untrusted. DNS resolution and every redirect reject local, private, documentation, and non-HTTP destinations; response bytes, redirects, and request time are bounded. Preview-image URLs receive the same network-target validation.
+Remote link-preview targets are untrusted. DNS resolution and every redirect reject local, private, documentation, and non-HTTP destinations. Response parsing is capped at 64 KiB, redirects at five, and each HTTP hop at five seconds; DNS resolution can add delay. Preview-image URLs receive the same network-target validation. Destination sites can observe the deployment's source IP and requested domain.
 
 Successful previews use an in-memory bounded LRU-style cache. Failures use a shorter negative TTL, and concurrent requests for the same normalized URL share one in-flight fetch. The cache is per process and is lost on restart; it is observability/performance state, not persistent data.
 
@@ -70,18 +70,18 @@ Successful previews use an in-memory bounded LRU-style cache. Failures use a sho
 - `/readyz` is unauthenticated storage/shutdown readiness and returns `503` when the durable writer is unavailable.
 - `/api/status` is protected by configured application authentication and reports counts, storage/limits, writer state, and link-preview cache state.
 - `/api/metrics` is protected by the same authentication and returns Prometheus text metrics without clip contents.
-- `/api/export` returns an authenticated metadata JSON attachment. It includes text and media references, but not media bodies; it is not a full backup.
+- `/api/export` follows configured application authentication and returns a metadata JSON attachment. It includes text and media references, but not media bodies; it is not a full backup.
 
 ## Trust boundaries
 
 - The browser is untrusted input. API bodies, queries/cursors, path identifiers, filenames, WebSocket paths, hosts, and origins require validation.
 - The reverse proxy is trusted only when `TRUST_PROXY` explicitly says so. Forwarding headers from any other peer must be ignored.
 - The persistent volume contains sensitive data and is trusted for availability, not correctness. Startup normalization restores a missing default board and rejects malformed records defensively.
-- Authenticated users share one security domain. Boards isolate organization and accidental deletion, not authorization.
+- Every admitted client shares one security domain. Boards provide organization and accidental-change protection, not authorization.
 
 ## Persistence, export, and recovery
 
-Metadata is an in-memory object backed by `store.json`; uploaded bodies are ordinary files. Startup can recover from the previous snapshot. Because metadata and media remain separate resources, an operational backup must stop the process or snapshot the whole volume atomically.
+Metadata is an in-memory object backed by `store.json`; uploaded bodies are ordinary files. If an existing `store.json` is unreadable or invalid and `store.json.bak` is valid, startup preserves the corrupt file and recovers the previous snapshot. A missing primary store starts a new default store rather than automatically promoting the backup. Because metadata and media remain separate resources, an operational backup must stop the process or snapshot the whole volume atomically.
 
 The metadata export endpoint is useful for inspection and migration tooling, but restoring it alone cannot restore files or images. See [operations.md](operations.md) for full-volume backup and non-destructive restore.
 
@@ -98,4 +98,4 @@ Do not run multiple replicas against the same volume. Scaling beyond one instanc
 
 ## Quality gates
 
-`npm run check` combines ESLint, JavaScript type checks, Node tests, integration tests against isolated server processes, and coverage thresholds. CI additionally builds and smoke-tests the container, checks the Dockerfile, scans the final image for high/critical known vulnerabilities, and publishes only after the test job succeeds.
+`npm run check` combines ESLint, JavaScript type checks, Node tests, integration tests against isolated server processes, and scoped coverage thresholds. CI additionally runs `npm audit`, lints the Dockerfile, builds and smoke-tests the hardened container, and scans the test image. Publication then builds and scans the actual `linux/amd64` and `linux/arm64` images separately; only after both pass are the canonical multi-platform `sha-*` and `latest` manifests created.
