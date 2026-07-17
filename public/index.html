@@ -25,12 +25,15 @@
       <span class="subtitle">schowek w sieci</span>
     </div>
     <div class="header-right">
-      <button id="storage-btn" class="header-button" type="button">Pamięć</button>
-      <button id="notification-btn" class="header-button" type="button" hidden>Powiadomienia</button>
-      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Zmień motyw"></button>
+      <div id="header-tools" class="header-tools">
+        <button id="storage-btn" class="header-button" type="button">Pamięć</button>
+        <button id="notification-btn" class="header-button" type="button" hidden>Powiadomienia</button>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Zmień motyw: Auto">Auto</button>
+      </div>
+      <button id="header-menu-toggle" class="header-button header-menu-toggle" type="button" aria-expanded="false" aria-controls="header-tools" aria-label="Ustawienia">⋯</button>
       <div id="status" class="connection-status connecting" role="status" aria-live="polite">
-        <span class="status-dot" aria-hidden="true" hidden></span>
-        <span id="status-text" hidden>Łączenie…</span>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Łączenie…</span>
       </div>
       <button id="retry-btn" class="header-button" type="button" hidden>Ponów</button>
     </div>
@@ -56,7 +59,7 @@
       <label class="visually-hidden" for="text-input">Treść wpisu</label>
       <textarea id="text-input" placeholder="Wpisz lub wklej tekst tutaj..." rows="3"></textarea>
       <div class="paste-actions">
-        <span class="hint">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
+        <span id="composer-hint" class="hint" data-mode="shortcut">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
         <div class="paste-buttons">
           <button id="file-btn" class="btn btn-secondary" type="button" disabled>Za&#322;&#261;cz plik</button>
           <input id="file-input" type="file" multiple hidden>

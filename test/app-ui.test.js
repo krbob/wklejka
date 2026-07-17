@@ -46,6 +46,7 @@ const appSource = readFileSync(path.join(publicDirectory, 'app.js'), 'utf8');
  *   boards?: TestBoard[],
  *   clips?: TestClip[],
  *   handleRequest?: RequestHandler,
+ *   online?: boolean,
  * }} BootOptions
  */
 
@@ -82,6 +83,7 @@ async function bootApp(options = {}) {
     boards = [{ id: 'default', name: 'Schowek', createdAt: Date.now() - 60_000 }],
     clips = [],
     handleRequest,
+    online = true,
   } = options;
   const dom = new JSDOM(htmlSource, {
     pretendToBeVisual: true,
@@ -90,6 +92,11 @@ async function bootApp(options = {}) {
   });
   const { window } = dom;
   const calls = [];
+
+  Object.defineProperty(window.navigator, 'onLine', {
+    configurable: true,
+    value: online,
+  });
 
   window.matchMedia = query => ({
     matches: false,
@@ -728,4 +735,52 @@ test('new board creation keeps failures in the dialog and activates a successful
   );
   assert.ok(app.calls.some(call => call.method === 'GET'
     && call.url.pathname === '/api/boards/project-board/clips'));
+});
+
+test('offline mode keeps the draft editable and pauses network actions', async (t) => {
+  const app = await bootApp({ online: false });
+  t.after(app.close);
+
+  const input = /** @type {HTMLTextAreaElement} */ (app.document.querySelector('#text-input'));
+  const send = /** @type {HTMLButtonElement} */ (app.document.querySelector('#send-btn'));
+  const file = /** @type {HTMLButtonElement} */ (app.document.querySelector('#file-btn'));
+  const hint = /** @type {HTMLElement} */ (app.document.querySelector('#composer-hint'));
+  assert.ok(input);
+  assert.ok(send);
+  assert.ok(file);
+  assert.ok(hint);
+
+  input.value = 'Offline draft';
+  input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(input.readOnly, false);
+  assert.equal(send.disabled, true);
+  assert.equal(file.disabled, true);
+  assert.equal(hint.dataset.mode, 'offline');
+  assert.match(hint.textContent, /Szkic zapisany lokalnie/);
+  send.click();
+  assert.equal(app.calls.filter(call => call.method === 'POST').length, 0);
+  assert.equal(app.window.localStorage.getItem('wklejka-drafts-v1'), '{"default":"Offline draft"}');
+});
+
+test('mobile utility menu exposes its state and closes with Escape', async (t) => {
+  const app = await bootApp();
+  t.after(app.close);
+
+  const toggle = /** @type {HTMLButtonElement} */ (app.document.querySelector('#header-menu-toggle'));
+  const tools = /** @type {HTMLElement} */ (app.document.querySelector('#header-tools'));
+  assert.ok(toggle);
+  assert.ok(tools);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  toggle.click();
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(tools.classList.contains('is-open'), true);
+
+  toggle.dispatchEvent(new app.window.KeyboardEvent('keydown', {
+    key: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  }));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(tools.classList.contains('is-open'), false);
+  assert.equal(app.document.activeElement, toggle);
 });

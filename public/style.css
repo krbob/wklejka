@@ -917,6 +917,21 @@ main {
   gap: 12px;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-menu-toggle {
+  display: none;
+  width: 44px;
+  padding: 0;
+  place-items: center;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
 .theme-toggle {
   background: none;
   border: 1px solid var(--border);
@@ -1425,7 +1440,8 @@ article.clip {
 
 @media (max-width: 700px) {
   .app-header {
-    align-items: flex-start;
+    align-items: center;
+    min-height: 68px;
   }
 
   .subtitle {
@@ -1433,15 +1449,66 @@ article.clip {
   }
 
   .header-right {
+    position: relative;
     justify-content: flex-end;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+  }
+
+  .header-menu-toggle {
+    display: grid;
+  }
+
+  .header-tools {
+    position: absolute;
+    z-index: 80;
+    top: calc(100% + 8px);
+    right: 0;
+    display: none;
+    min-width: 230px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .header-tools.is-open {
+    display: grid;
+  }
+
+  .header-tools > button {
+    width: 100%;
+    min-height: 44px;
+    text-align: left;
   }
 
   .connection-status #status-text {
-    max-width: 120px;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
     overflow: hidden;
-    text-overflow: ellipsis;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  #retry-btn {
+    width: 44px;
+    padding: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  #retry-btn::before {
+    content: "↻";
+    font-size: 1.1rem;
+  }
+
+  .hint[data-mode="shortcut"] {
+    display: none;
   }
 
   .board-bar {

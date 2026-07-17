@@ -15,6 +15,7 @@ const i18n = {
     subtitle: 'schowek w sieci',
     placeholder: 'Wpisz lub wklej tekst tutaj...',
     hint: 'Ctrl+Enter = wy\u015blij \u00a0|\u00a0 Ctrl+V = wklej obrazek',
+    draftOffline: 'Szkic zapisany lokalnie — wyślij po odzyskaniu połączenia.',
     send: 'Wy\u015blij',
     dropHere: 'Upu\u015b\u0107 obrazek tutaj',
     newTab: '+ Nowa karta',
@@ -70,6 +71,7 @@ const i18n = {
     themeDark: 'Ciemny',
     themeLight: 'Jasny',
     themeToggleLabel: 'Zmie\u0144 motyw',
+    settings: 'Ustawienia',
     expiryMinutes: '{count} min',
     expiryHours: '{count} godz.',
     expiryDays: '{count} dn.',
@@ -176,6 +178,7 @@ const i18n = {
     subtitle: 'shared clipboard',
     placeholder: 'Type or paste text here...',
     hint: 'Ctrl+Enter = send \u00a0|\u00a0 Ctrl+V = paste image',
+    draftOffline: 'Draft saved locally — send it when the connection returns.',
     send: 'Send',
     dropHere: 'Drop image here',
     newTab: '+ New tab',
@@ -231,6 +234,7 @@ const i18n = {
     themeDark: 'Dark',
     themeLight: 'Light',
     themeToggleLabel: 'Toggle theme',
+    settings: 'Settings',
     expiryMinutes: '{count} min',
     expiryHours: '{count}h',
     expiryDays: '{count}d',
@@ -379,6 +383,7 @@ function updateStaticTexts() {
   $('#add-board-btn').textContent = t('newTab');
   $('#add-board-btn').setAttribute('aria-label', t('newTab').replace(/^\+\s*/, ''));
   $('#add-board-btn').removeAttribute('hidden');
+  $('#header-menu-toggle').setAttribute('aria-label', t('settings'));
   $('#retry-btn').textContent = t('retry');
   $('#type-filter-label').textContent = t('typeFilter');
   const filter = $('#type-filter');
@@ -673,6 +678,13 @@ function updateNotificationButton() {
   }
 }
 
+function setHeaderToolsOpen(open) {
+  const tools = $('#header-tools');
+  const toggle = $('#header-menu-toggle');
+  tools.classList.toggle('is-open', open);
+  toggle.setAttribute('aria-expanded', String(open));
+}
+
 function renderBoardSummary() {
   const board = boards.find(item => item.id === currentBoardId);
   if (!board) return;
@@ -707,9 +719,13 @@ function renderBoardSummary() {
 function updateComposerState() {
   const board = boards.find(item => item.id === currentBoardId);
   const locked = !!board?.locked;
+  const online = navigator.onLine;
   const hasText = !!$('#text-input').value.trim();
-  $('#send-btn').disabled = locked || !hasText || textSendInFlightBoards.has(currentBoardId);
-  $('#file-btn').disabled = locked || !board;
+  $('#send-btn').disabled = locked || !online || !hasText || textSendInFlightBoards.has(currentBoardId);
+  $('#file-btn').disabled = locked || !online || !board;
+  const hint = $('#composer-hint');
+  hint.textContent = online ? t('hint') : t('draftOffline');
+  hint.dataset.mode = online ? 'shortcut' : 'offline';
 }
 
 // --- API helpers ---
@@ -1095,6 +1111,10 @@ async function startUpload(task) {
 
 function uploadBlob(blob, type, originalName, boardId = currentBoardId) {
   if (!blob || !boardId) return;
+  if (!navigator.onLine) {
+    showToast(t('offline'));
+    return;
+  }
   if (boards.find(board => board.id === boardId)?.locked) {
     showToast(t('boardLocked'));
     return;
@@ -2189,7 +2209,9 @@ document.addEventListener('drop', (e) => {
 async function sendText() {
   const textarea = $('#text-input');
   const boardId = currentBoardId;
-  if (textSendInFlightBoards.has(boardId) || boards.find(board => board.id === boardId)?.locked) return;
+  if (!navigator.onLine
+    || textSendInFlightBoards.has(boardId)
+    || boards.find(board => board.id === boardId)?.locked) return;
   const text = textarea.value;
   if (!text.trim()) return;
   saveDraft(boardId, text);
@@ -2415,6 +2437,7 @@ function dialogFocusTarget(dialog) {
 function isAvailableFocusTarget(target) {
   if (!(target instanceof HTMLElement) || !target.isConnected || target.hidden) return false;
   if (target.matches(':disabled') || target.closest('[hidden]')) return false;
+  if (typeof target.checkVisibility === 'function' && !target.checkVisibility()) return false;
   const closedDetails = target.closest('details:not([open])');
   return !closedDetails || target.matches('summary');
 }
@@ -2905,7 +2928,13 @@ function cleanupCounts(result, dryRun) {
 
 function openStorageModal(event) {
   resetCleanupPreview();
-  openDialog($('#storage-modal'), $('#storage-title'), event?.currentTarget);
+  setHeaderToolsOpen(false);
+  openDialog(
+    $('#storage-modal'),
+    $('#storage-title'),
+    event?.currentTarget,
+    $('#header-menu-toggle'),
+  );
   loadStorageStatus();
 }
 
@@ -2985,6 +3014,9 @@ $('#manage-board-btn').addEventListener('click', (event) => {
   const board = boards.find(item => item.id === currentBoardId);
   if (board && board.id !== 'default') openManageBoardModal(board, event.currentTarget);
 });
+$('#header-menu-toggle').addEventListener('click', () => {
+  setHeaderToolsOpen($('#header-menu-toggle').getAttribute('aria-expanded') !== 'true');
+});
 $('#storage-btn').addEventListener('click', openStorageModal);
 $('#retry-btn').addEventListener('click', () => {
   if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();
@@ -3001,9 +3033,16 @@ $('#notification-btn').addEventListener('click', async () => {
     // The browser may reject permission prompts without changing state.
   }
   updateNotificationButton();
+  setHeaderToolsOpen(false);
 });
 
 document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (target instanceof Node
+    && !$('#header-tools').contains(target)
+    && !$('#header-menu-toggle').contains(target)) {
+    setHeaderToolsOpen(false);
+  }
   if (event.target instanceof Element && event.target.closest('dialog')) return;
   document.querySelectorAll('.clip-more[open]').forEach(menu => {
     if (!menu.contains(event.target)) menu.open = false;
@@ -3012,6 +3051,12 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+  if ($('#header-menu-toggle').getAttribute('aria-expanded') === 'true') {
+    event.preventDefault();
+    setHeaderToolsOpen(false);
+    $('#header-menu-toggle').focus();
+    return;
+  }
   const focusedMenu = document.activeElement?.closest?.('.clip-more[open]');
   const menu = focusedMenu || document.querySelector('.clip-more[open]');
   if (!menu) return;
@@ -3026,9 +3071,11 @@ syncFromServer();
 window.addEventListener('offline', () => {
   setWsState('offline');
   renderConnectionStatus();
+  updateComposerState();
 });
 
 window.addEventListener('online', () => {
+  updateComposerState();
   connectWS();
   syncFromServer();
 });
