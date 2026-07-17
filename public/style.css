@@ -84,6 +84,10 @@ header {
   justify-content: space-between;
 }
 
+.app-header {
+  min-height: 77px;
+}
+
 .header-left {
   display: flex;
   align-items: baseline;
@@ -310,6 +314,7 @@ main {
 
 .clip-toolbar input {
   width: 100%;
+  min-height: 44px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -511,7 +516,8 @@ main {
   color: var(--primary);
   cursor: pointer;
   font-size: 0.85rem;
-  padding: 4px 0 0;
+  min-height: 44px;
+  padding: 8px 0;
   display: block;
 }
 
@@ -1162,12 +1168,21 @@ main {
 }
 
 .board-bar {
+  position: sticky;
+  z-index: 20;
+  top: 0;
   display: flex;
   align-items: stretch;
   gap: 8px;
   padding: 8px 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  min-height: 61px;
+}
+
+#main-content,
+#board-panel {
+  scroll-margin-top: 68px;
 }
 
 .board-bar nav#tabs {
@@ -1512,15 +1527,7 @@ article.clip {
   }
 
   .board-bar {
-    position: sticky;
-    z-index: 20;
-    top: 0;
     padding: 8px 10px;
-  }
-
-  #main-content,
-  #board-panel {
-    scroll-margin-top: 68px;
   }
 
   .add-board-btn {
@@ -1549,6 +1556,16 @@ article.clip {
 
   .paste-buttons > .btn {
     flex: 1 1 0;
+  }
+}
+
+@media (min-width: 701px) {
+  .clip-controls {
+    position: sticky;
+    z-index: 15;
+    top: 61px;
+    padding: 8px 0 1px;
+    background: var(--bg);
   }
 }
 

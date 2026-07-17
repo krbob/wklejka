@@ -22,7 +22,7 @@ const i18n = {
     deleteTab: 'Usu\u0144 kart\u0119',
     confirmDelete: 'Usun\u0105\u0107 t\u0119 kart\u0119 i wszystkie jej wpisy?',
     tabNamePrompt: 'Nazwa nowej karty:',
-    empty: 'Brak wpis\u00f3w. Wklej tekst lub obrazek powy\u017cej.',
+    empty: 'Brak wpis\u00f3w. Dodaj tekst, obraz lub plik powy\u017cej.',
     image: 'Obrazek',
     text: 'Tekst',
     copy: 'Kopiuj',
@@ -152,7 +152,7 @@ const i18n = {
     storageUsed: 'Użyto {used} z {max} ({percent}%)',
     boardsCount: 'Karty',
     clipsCount: 'Wpisy',
-    connectionsCount: 'Połączenia realtime',
+    connectionsCount: 'Połączenia na żywo',
     perBoardLimit: 'Limit wpisów na kartę',
     totalLimit: 'Łączny limit wpisów',
     refresh: 'Odśwież',
@@ -185,7 +185,7 @@ const i18n = {
     deleteTab: 'Delete tab',
     confirmDelete: 'Delete this tab and all its entries?',
     tabNamePrompt: 'New tab name:',
-    empty: 'No entries. Paste text or image above.',
+    empty: 'No entries. Add text, an image, or a file above.',
     image: 'Image',
     text: 'Text',
     copy: 'Copy',
@@ -382,7 +382,6 @@ function updateStaticTexts() {
   $('#search-input').placeholder = t('searchPlaceholder');
   $('#add-board-btn').textContent = t('newTab');
   $('#add-board-btn').setAttribute('aria-label', t('newTab').replace(/^\+\s*/, ''));
-  $('#add-board-btn').removeAttribute('hidden');
   $('#header-menu-toggle').setAttribute('aria-label', t('settings'));
   $('#retry-btn').textContent = t('retry');
   $('#type-filter-label').textContent = t('typeFilter');
@@ -416,7 +415,6 @@ function updateStaticTexts() {
   $('#selection-toggle').textContent = t('select');
   $('#select-all-label').textContent = t('selectAllVisible');
   $('#bulk-delete').textContent = t('bulkDelete');
-  $('#selection-cancel').textContent = t('cancel');
   $('#load-more').textContent = t('loadMore');
   $('#clip-expiry-title').textContent = t('clipExpiryTitle');
   $('#clip-expiry-label').textContent = t('expiryNewDeadline');
@@ -580,7 +578,7 @@ function restoreDraft(boardId) {
   updateComposerState();
 }
 
-function selectBoard(boardId, { clearHash = true } = {}) {
+function selectBoard(boardId, { clearHash = true, scrollToTop = true } = {}) {
   if (!boardId || boardId === currentBoardId) return false;
   clearTimeout(searchDebounceTimer);
   saveDraft(currentBoardId, $('#text-input').value);
@@ -599,6 +597,9 @@ function selectBoard(boardId, { clearHash = true } = {}) {
   renderTabs();
   renderBoardSummary();
   loadClips(boardId).catch(error => showToast(error.message || t('syncError')));
+  if (scrollToTop) {
+    requestAnimationFrame(() => $('#main-content').scrollIntoView({ block: 'start' }));
+  }
   return true;
 }
 
@@ -1625,7 +1626,7 @@ function focusClipFromHash() {
   if (location.hash === focusedClipHash) return;
   if (target.boardId !== currentBoardId) {
     if (boards.some(board => board.id === target.boardId)) {
-      selectBoard(target.boardId, { clearHash: false });
+      selectBoard(target.boardId, { clearHash: false, scrollToTop: false });
     } else if (initialBoardsLoaded) {
       clearUnavailableClipTarget();
     }
@@ -2280,10 +2281,6 @@ $('#load-more').addEventListener('click', async () => {
 });
 
 $('#selection-toggle').addEventListener('click', () => setSelectionMode(!selectionMode));
-$('#selection-cancel').addEventListener('click', () => {
-  setSelectionMode(false);
-  $('#selection-toggle').focus();
-});
 
 $('#select-all-visible').addEventListener('change', (event) => {
   for (const clip of clips) {

@@ -92,6 +92,7 @@ async function bootApp(options = {}) {
   });
   const { window } = dom;
   const calls = [];
+  const scrollTargets = [];
 
   Object.defineProperty(window.navigator, 'onLine', {
     configurable: true,
@@ -112,7 +113,9 @@ async function bootApp(options = {}) {
     configurable: true,
     value: { escape: value => String(value).replace(/["\\]/g, '\\$&') },
   });
-  window.HTMLElement.prototype.scrollIntoView = () => {};
+  window.HTMLElement.prototype.scrollIntoView = function (options) {
+    scrollTargets.push({ element: this, options });
+  };
 
   class FakeWebSocket {
     static CONNECTING = 0;
@@ -186,6 +189,7 @@ async function bootApp(options = {}) {
     calls,
     close: () => dom.window.close(),
     document: window.document,
+    scrollTargets,
     window,
   };
 }
@@ -383,7 +387,8 @@ test('board management stays outside the tablist and follows the active board', 
     () => app.document.querySelector('#board-heading')?.textContent === customBoard.name
       && app.document.querySelector('#clips')?.getAttribute('aria-busy') === 'false'
       && app.calls.some(call => call.method === 'GET'
-        && call.url.pathname === `/api/boards/${customBoard.id}/clips`),
+        && call.url.pathname === `/api/boards/${customBoard.id}/clips`)
+      && app.scrollTargets.some(target => target.element.id === 'main-content'),
     'custom board load',
   );
 
@@ -783,4 +788,17 @@ test('mobile utility menu exposes its state and closes with Escape', async (t) =
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
   assert.equal(tools.classList.contains('is-open'), false);
   assert.equal(app.document.activeElement, toggle);
+});
+
+test('empty and selection states avoid stale copy and duplicate exit actions', async (t) => {
+  const app = await bootApp();
+  t.after(app.close);
+
+  assert.match(app.document.querySelector('#clips')?.textContent || '', /tekst, obraz lub plik/);
+  assert.equal(app.document.querySelector('#selection-cancel'), null);
+  const selectionToggle = /** @type {HTMLButtonElement} */ (
+    app.document.querySelector('#selection-toggle')
+  );
+  assert.ok(selectionToggle);
+  assert.equal(selectionToggle.disabled, true);
 });

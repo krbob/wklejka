@@ -44,7 +44,7 @@
   <div class="board-bar">
     <nav id="tabs" role="tablist" aria-label="Karty schowka"></nav>
     <button id="manage-board-btn" class="tab-manage" type="button" aria-haspopup="dialog" aria-controls="manage-board-modal" hidden>⋯</button>
-    <button id="add-board-btn" class="add-board-btn" type="button" hidden>+ Nowa karta</button>
+    <button id="add-board-btn" class="add-board-btn" type="button">+ Nowa karta</button>
   </div>
 
   <main id="main-content" tabindex="-1">
@@ -69,31 +69,32 @@
       </section>
 
       <section id="uploading" class="upload-list" aria-label="Przesyłane pliki" aria-live="polite"></section>
-      <div class="clip-toolbar">
-      <label class="search-field">
-        <span class="visually-hidden">Szukaj wpisów</span>
-        <input id="search-input" type="search" autocomplete="off" maxlength="200" placeholder="Szukaj wpis&oacute;w">
-      </label>
-      <label class="filter-field">
-        <span id="type-filter-label">Typ</span>
-        <select id="type-filter">
-          <option value="all">Wszystkie</option>
-          <option value="text">Tekst</option>
-          <option value="image">Obrazki</option>
-          <option value="file">Pliki</option>
-        </select>
-      </label>
-      <button id="selection-toggle" class="btn btn-secondary" type="button">Zaznacz</button>
-      <output id="result-count" for="search-input type-filter" aria-live="polite"></output>
-      </div>
-      <div id="selection-toolbar" class="selection-toolbar" hidden>
-        <label class="selection-all">
-          <input id="select-all-visible" type="checkbox">
-          <span id="select-all-label">Zaznacz wszystkie widoczne</span>
-        </label>
-        <output id="selected-count" aria-live="polite">Zaznaczono: 0</output>
-        <button id="bulk-delete" class="btn btn-danger" type="button" disabled>Usuń zaznaczone</button>
-        <button id="selection-cancel" class="btn btn-secondary" type="button">Anuluj</button>
+      <div class="clip-controls">
+        <div class="clip-toolbar">
+          <label class="search-field">
+            <span class="visually-hidden">Szukaj wpisów</span>
+            <input id="search-input" type="search" autocomplete="off" maxlength="200" placeholder="Szukaj wpis&oacute;w">
+          </label>
+          <label class="filter-field">
+            <span id="type-filter-label">Typ</span>
+            <select id="type-filter">
+              <option value="all">Wszystkie</option>
+              <option value="text">Tekst</option>
+              <option value="image">Obrazki</option>
+              <option value="file">Pliki</option>
+            </select>
+          </label>
+          <button id="selection-toggle" class="btn btn-secondary" type="button">Zaznacz</button>
+          <output id="result-count" for="search-input type-filter" aria-live="polite"></output>
+        </div>
+        <div id="selection-toolbar" class="selection-toolbar" hidden>
+          <label class="selection-all">
+            <input id="select-all-visible" type="checkbox">
+            <span id="select-all-label">Zaznacz wszystkie widoczne</span>
+          </label>
+          <output id="selected-count" aria-live="polite">Zaznaczono: 0</output>
+          <button id="bulk-delete" class="btn btn-danger" type="button" disabled>Usuń zaznaczone</button>
+        </div>
       </div>
       <ol id="clips" class="clip-list" aria-label="Wpisy"></ol>
       <div class="load-more-row">
