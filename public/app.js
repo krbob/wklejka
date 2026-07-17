@@ -2485,7 +2485,11 @@ $('#modal-create').addEventListener('click', async () => {
   const button = $('#modal-create');
   button.disabled = true;
   try {
-    await createBoard(name, expiresIn || null);
+    const board = await createBoard(name, expiresIn || null);
+    selectBoard(board.id);
+    const activeTab = document.querySelector(`.tab[data-board-id="${CSS.escape(board.id)}"]`);
+    requestAnimationFrame(() => activeTab?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+    dialogOpeners.set($('#new-board-modal'), $('#text-input'));
     closeNewBoardModal();
   } catch (error) {
     showToast(error.message);

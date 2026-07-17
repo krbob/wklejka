@@ -157,6 +157,13 @@ async function bootApp(options = {}) {
         createdAt: Date.now(),
       });
     }
+    if (method === 'POST' && requestUrl.pathname === '/api/boards') {
+      return jsonResponse({
+        id: `board-${calls.length}`,
+        name: body?.name,
+        createdAt: Date.now(),
+      });
+    }
     return jsonResponse({ error: `Unexpected request: ${method} ${requestUrl.pathname}` }, 404);
   };
 
@@ -666,4 +673,59 @@ test('new board creation requires a non-empty name', async (t) => {
   name.value = 'Projekt';
   name.dispatchEvent(new app.window.Event('input', { bubbles: true }));
   assert.equal(create.disabled, false);
+});
+
+test('new board creation keeps failures in the dialog and activates a successful retry', async (t) => {
+  let failNextCreation = true;
+  const app = await bootApp({
+    handleRequest(call) {
+      if (call.method !== 'POST' || call.url.pathname !== '/api/boards') return null;
+      if (failNextCreation) {
+        failNextCreation = false;
+        return jsonResponse({ error: 'Temporary board failure' }, 503);
+      }
+      return jsonResponse({
+        id: 'project-board',
+        name: call.body.name,
+        createdAt: Date.now(),
+      });
+    },
+  });
+  t.after(app.close);
+
+  const open = /** @type {HTMLButtonElement} */ (app.document.querySelector('#add-board-btn'));
+  const dialog = /** @type {HTMLDialogElement} */ (app.document.querySelector('#new-board-modal'));
+  const name = /** @type {HTMLInputElement} */ (app.document.querySelector('#modal-name'));
+  const create = /** @type {HTMLButtonElement} */ (app.document.querySelector('#modal-create'));
+  assert.ok(open);
+  assert.ok(dialog);
+  assert.ok(name);
+  assert.ok(create);
+
+  open.click();
+  name.value = 'Projekt';
+  name.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  create.click();
+  await waitFor(
+    () => app.calls.filter(call => call.method === 'POST' && call.url.pathname === '/api/boards').length === 1
+      && create.disabled === false,
+    'failed board creation',
+  );
+  assert.equal(dialog.hasAttribute('open'), true);
+  assert.equal(
+    app.document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-board-id'),
+    'default',
+  );
+
+  create.click();
+  await waitFor(
+    () => !dialog.hasAttribute('open')
+      && app.document.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute('data-board-id') === 'project-board'
+      && app.document.querySelector('#board-heading')?.textContent === 'Projekt'
+      && app.document.querySelector('#clips')?.getAttribute('aria-busy') === 'false'
+      && app.document.activeElement === app.document.querySelector('#text-input'),
+    'successful board activation',
+  );
+  assert.ok(app.calls.some(call => call.method === 'GET'
+    && call.url.pathname === '/api/boards/project-board/clips'));
 });
