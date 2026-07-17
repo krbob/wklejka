@@ -128,7 +128,10 @@ const i18n = {
     unpin: 'Odepnij',
     expiryAction: 'Wygasanie',
     clipExpiryTitle: 'Wygasanie wpisu',
+    expiryNewDeadline: 'Nowy termin',
+    expiryUnchanged: 'Bez zmian',
     expiryCurrentNever: 'Ten wpis nie wygasa.',
+    clipUnavailable: 'Wpis wygasł lub został usunięty.',
     share: 'Udostępnij',
     shareTitle: 'Wpis z Wklejki',
     shareDialogTitle: 'Udostępnij wpis',
@@ -285,7 +288,10 @@ const i18n = {
     unpin: 'Unpin',
     expiryAction: 'Expiry',
     clipExpiryTitle: 'Clip expiry',
+    expiryNewDeadline: 'New expiry',
+    expiryUnchanged: 'No change',
     expiryCurrentNever: 'This clip does not expire.',
+    clipUnavailable: 'This clip has expired or was deleted.',
     share: 'Share',
     shareTitle: 'Wklejka clip',
     shareDialogTitle: 'Share clip',
@@ -405,15 +411,16 @@ function updateStaticTexts() {
   $('#selection-cancel').textContent = t('cancel');
   $('#load-more').textContent = t('loadMore');
   $('#clip-expiry-title').textContent = t('clipExpiryTitle');
-  $('#clip-expiry-label').textContent = t('expiresLabel');
+  $('#clip-expiry-label').textContent = t('expiryNewDeadline');
   $('#clip-expiry-cancel').textContent = t('cancel');
   $('#clip-expiry-save').textContent = t('save');
   const expiry = $('#clip-expiry-value');
-  expiry.options[0].textContent = t('expiresNever');
-  expiry.options[1].textContent = t('expires1h');
-  expiry.options[2].textContent = t('expires24h');
-  expiry.options[3].textContent = t('expires7d');
-  expiry.options[4].textContent = t('expires30d');
+  expiry.options[0].textContent = t('expiryUnchanged');
+  expiry.options[1].textContent = t('expiresNever');
+  expiry.options[2].textContent = t('expires1h');
+  expiry.options[3].textContent = t('expires24h');
+  expiry.options[4].textContent = t('expires7d');
+  expiry.options[5].textContent = t('expires30d');
   $('#share-title').textContent = t('shareDialogTitle');
   $('#share-description').textContent = t('shareDescription');
   $('#share-qr').alt = t('shareQrAlt');
@@ -505,6 +512,7 @@ let clipTypeFilter = 'all';
 let wsReconnectTimer = null;
 let manageBoardId = null;
 let initialClipsLoaded = false;
+let initialBoardsLoaded = false;
 const CLIPS_PAGE_SIZE = 50;
 let nextClipsCursor = null;
 let totalClips = 0;
@@ -515,6 +523,7 @@ let selectionMode = false;
 const selectedClipIds = new Set();
 let bulkDeleteLimit = 100;
 let expiryClipContext = null;
+const textSendInFlightBoards = new Set();
 let shareClipContext = null;
 let cleanupPreviewState = null;
 const dialogOpeners = new WeakMap();
@@ -579,7 +588,7 @@ function selectBoard(boardId, { clearHash = true } = {}) {
   updateTitle();
   renderTabs();
   renderBoardSummary();
-  loadClips(boardId);
+  loadClips(boardId).catch(error => showToast(error.message || t('syncError')));
   return true;
 }
 
@@ -667,7 +676,7 @@ function renderBoardSummary() {
   const locked = !!board.locked;
   $('#text-input').readOnly = locked;
   $('#text-input').placeholder = locked ? t('boardLocked') : t('placeholder');
-  $('#send-btn').disabled = locked;
+  $('#send-btn').disabled = locked || textSendInFlightBoards.has(currentBoardId);
   $('#file-btn').disabled = locked;
   if (locked && selectionMode) {
     selectionMode = false;
@@ -776,6 +785,7 @@ function stripTokenFromUrl() {
 
 async function loadBoards() {
   boards = await api('GET', '/boards');
+  initialBoardsLoaded = true;
   const boardIds = new Set(boards.map(b => b.id));
   Object.keys(unreadCounts).forEach((id) => {
     if (!boardIds.has(id)) delete unreadCounts[id];
@@ -870,6 +880,7 @@ async function loadClips(boardId = currentBoardId, { append = false } = {}) {
 function renderClipLoadError(message) {
   const container = $('#clips');
   container.setAttribute('aria-busy', 'false');
+  $('#result-count').textContent = '';
   const item = document.createElement('li');
   item.className = 'empty-state error-state';
   const text = document.createElement('p');
@@ -1569,6 +1580,8 @@ function focusClipFromHash() {
   if (target.boardId !== currentBoardId) {
     if (boards.some(board => board.id === target.boardId)) {
       selectBoard(target.boardId, { clearHash: false });
+    } else if (initialBoardsLoaded) {
+      clearUnavailableClipTarget();
     }
     return;
   }
@@ -1580,6 +1593,7 @@ function focusClipFromHash() {
     loadClips(currentBoardId, { append: false }).catch(error => showToast(error.message));
     return;
   }
+  if ($('#clips').getAttribute('aria-busy') === 'true') return;
   requestAnimationFrame(() => {
     if (focusClipElement(target.clipId)) {
       focusedClipHash = location.hash;
@@ -1587,8 +1601,17 @@ function focusClipFromHash() {
       loadClips(currentBoardId, { append: true })
         .then(() => focusClipFromHash())
         .catch(error => showToast(error.message));
+    } else if (!clipsLoadingMore) {
+      clearUnavailableClipTarget();
     }
   });
+}
+
+function clearUnavailableClipTarget() {
+  if (!clipTargetFromHash()) return;
+  focusedClipHash = '';
+  history.replaceState(null, '', location.pathname + location.search);
+  showToast(t('clipUnavailable'));
 }
 
 function appendLazyFilePreview(content, clip, extension, previewUrl) {
@@ -2098,10 +2121,12 @@ document.addEventListener('drop', (e) => {
 async function sendText() {
   const textarea = $('#text-input');
   const boardId = currentBoardId;
+  if (textSendInFlightBoards.has(boardId) || boards.find(board => board.id === boardId)?.locked) return;
   const text = textarea.value;
   if (!text.trim()) return;
   saveDraft(boardId, text);
   const sendButton = $('#send-btn');
+  textSendInFlightBoards.add(boardId);
   sendButton.disabled = true;
   try {
     await sendClip(boardId, 'text', text);
@@ -2113,7 +2138,9 @@ async function sendText() {
   } catch {
     // Keep the exact draft for retry, including leading and trailing whitespace.
   } finally {
-    sendButton.disabled = !!boards.find(board => board.id === currentBoardId)?.locked;
+    textSendInFlightBoards.delete(boardId);
+    sendButton.disabled = textSendInFlightBoards.has(currentBoardId)
+      || !!boards.find(board => board.id === currentBoardId)?.locked;
   }
 }
 
@@ -2140,7 +2167,6 @@ function scheduleFilterReload(delay = 300) {
   searchDebounceTimer = setTimeout(() => {
     loadClips(currentBoardId, { append: false }).catch(error => {
       showToast(error.message || t('syncError'));
-      renderClips();
     });
   }, delay);
 }
@@ -2566,7 +2592,8 @@ function clipActionElement(boardId, clipId, action) {
 function openClipExpiryModal(boardId, clip, opener) {
   expiryClipContext = { boardId, clipId: clip.id };
   $('#clip-expiry-current').textContent = clip.expiresAt ? clipExpiryText(clip) : t('expiryCurrentNever');
-  $('#clip-expiry-value').value = clip.expiresAt ? '86400000' : '';
+  $('#clip-expiry-value').value = 'unchanged';
+  $('#clip-expiry-save').disabled = true;
   openDialog(
     $('#clip-expiry-modal'),
     $('#clip-expiry-value'),
@@ -2581,10 +2608,17 @@ function closeClipExpiryModal() {
 
 $('#clip-expiry-cancel').addEventListener('click', closeClipExpiryModal);
 $('#clip-expiry-modal').addEventListener('close', () => { expiryClipContext = null; });
+$('#clip-expiry-value').addEventListener('change', () => {
+  $('#clip-expiry-save').disabled = $('#clip-expiry-value').value === 'unchanged';
+});
 $('#clip-expiry-save').addEventListener('click', async () => {
   if (!expiryClipContext) return;
   const context = { ...expiryClipContext };
   const value = $('#clip-expiry-value').value;
+  if (value === 'unchanged') {
+    closeClipExpiryModal();
+    return;
+  }
   const button = $('#clip-expiry-save');
   button.disabled = true;
   try {
