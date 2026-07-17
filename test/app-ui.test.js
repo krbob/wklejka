@@ -191,6 +191,9 @@ test('clip expiry requires an explicit new deadline', async (t) => {
     app.document.querySelector('button[data-action="expiry"]')
   );
   assert.ok(expiryButton);
+  const expiryMenu = /** @type {HTMLDetailsElement} */ (expiryButton.closest('.clip-more'));
+  assert.ok(expiryMenu);
+  expiryMenu.open = true;
   expiryButton.click();
 
   const select = /** @type {HTMLSelectElement} */ (app.document.querySelector('#clip-expiry-value'));
@@ -212,6 +215,12 @@ test('clip expiry requires an explicit new deadline', async (t) => {
   );
   const update = app.calls.find(call => call.method === 'PUT');
   assert.deepEqual(update.body, { expiresIn: 86_400_000 });
+  await waitFor(
+    () => !app.document.querySelector('#clip-expiry-modal')?.hasAttribute('open'),
+    'expiry dialog close',
+  );
+  await new Promise(resolve => app.window.requestAnimationFrame(() => resolve()));
+  assert.match(app.document.activeElement?.outerHTML || '', /clip-more-trigger/);
 });
 
 test('repeated keyboard submission creates one in-flight clip per board', async (t) => {
@@ -469,7 +478,123 @@ test('each clip type exposes one primary action in its header', async (t) => {
   }
 
   const fileClip = app.document.querySelector('.clip[data-id="file"]');
-  assert.equal(fileClip.querySelector('.clip-actions')?.textContent.includes('Pobierz'), false);
+  assert.equal(fileClip.querySelector('.clip-more-actions')?.textContent.includes('Pobierz'), false);
   const imageClip = app.document.querySelector('.clip[data-id="image"]');
-  assert.equal(imageClip.querySelector('.clip-actions')?.textContent.includes('Pobierz'), true);
+  assert.equal(imageClip.querySelector('.clip-more-actions')?.textContent.includes('Pobierz'), true);
+});
+
+test('secondary clip actions are grouped by type and board lock state', async (t) => {
+  const clips = [
+    { id: 'text', type: 'text', content: 'Text', createdAt: Date.now() - 3_000 },
+    {
+      id: 'image',
+      type: 'image',
+      imageUrl: '/images/example.png',
+      createdAt: Date.now() - 2_000,
+    },
+    {
+      id: 'file',
+      type: 'file',
+      originalName: 'example.pdf',
+      fileUrl: '/files/example.pdf',
+      createdAt: Date.now() - 1_000,
+    },
+  ];
+  const scenarios = [
+    {
+      name: 'unlocked',
+      board: { id: 'default', name: 'Schowek', createdAt: Date.now() },
+      expected: {
+        text: ['Edytuj', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+        image: ['Pobierz', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+        file: ['Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+      },
+    },
+    {
+      name: 'locked',
+      board: { id: 'default', name: 'Schowek', createdAt: Date.now(), locked: true },
+      expected: {
+        text: ['Udostępnij'],
+        image: ['Pobierz', 'Udostępnij'],
+        file: ['Udostępnij'],
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async (t) => {
+      const app = await bootApp({ boards: [scenario.board], clips });
+      t.after(app.close);
+      for (const [id, labels] of Object.entries(scenario.expected)) {
+        const clip = app.document.querySelector(`.clip[data-id="${id}"]`);
+        assert.ok(clip);
+        assert.equal(clip.querySelectorAll(':scope > article > .clip-actions').length, 0);
+        const buttons = [...clip.querySelectorAll('.clip-more-actions > button')];
+        assert.deepEqual(buttons.map(button => button.textContent), labels);
+      }
+    });
+  }
+});
+
+test('clip action disclosures keep only one menu open and support Escape', async (t) => {
+  const app = await bootApp({
+    clips: [
+      { id: 'first', type: 'text', content: 'First', createdAt: Date.now() - 2_000 },
+      { id: 'second', type: 'text', content: 'Second', createdAt: Date.now() - 1_000 },
+    ],
+  });
+  t.after(app.close);
+
+  const menus = /** @type {HTMLDetailsElement[]} */ (
+    [...app.document.querySelectorAll('.clip-more')]
+  );
+  const triggers = menus.map(menu => /** @type {HTMLElement} */ (
+    menu.querySelector('.clip-more-trigger')
+  ));
+  assert.equal(menus.length, 2);
+
+  triggers[0].click();
+  await waitFor(() => menus[0].open, 'first action menu');
+  triggers[1].click();
+  await waitFor(() => menus[1].open && !menus[0].open, 'second action menu');
+
+  triggers[1].focus();
+  triggers[1].dispatchEvent(new app.window.KeyboardEvent('keydown', {
+    key: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  }));
+  assert.equal(menus[1].open, false);
+  assert.equal(app.document.activeElement, triggers[1]);
+
+  triggers[0].click();
+  await waitFor(() => menus[0].open, 'reopened first action menu');
+  const heading = /** @type {HTMLElement} */ (app.document.querySelector('#board-heading'));
+  assert.ok(heading);
+  heading.click();
+  assert.equal(menus[0].open, false);
+});
+
+test('pinning restores focus after the reconciled clip render', async (t) => {
+  const app = await bootApp({
+    clips: [{ id: 'pinnable', type: 'text', content: 'Pin me', createdAt: Date.now() - 1_000 }],
+  });
+  t.after(app.close);
+
+  const menu = /** @type {HTMLDetailsElement} */ (app.document.querySelector('.clip-more'));
+  assert.ok(menu);
+  menu.open = true;
+  const pin = /** @type {HTMLButtonElement} */ (
+    [...menu.querySelectorAll('button')].find(button => button.textContent === 'Przypnij')
+  );
+  assert.ok(pin);
+  pin.focus();
+  pin.click();
+
+  await waitFor(
+    () => app.calls.filter(call => call.method === 'GET'
+      && call.url.pathname === '/api/boards/default/clips').length >= 2
+      && app.document.activeElement?.matches('.clip-more-trigger'),
+    'pin reconciliation and focus restoration',
+  );
 });

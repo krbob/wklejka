@@ -133,6 +133,7 @@ const i18n = {
     expiryCurrentNever: 'Ten wpis nie wygasa.',
     clipUnavailable: 'Wpis wygasł lub został usunięty.',
     share: 'Udostępnij',
+    moreActions: 'Więcej akcji',
     shareTitle: 'Wpis z Wklejki',
     shareDialogTitle: 'Udostępnij wpis',
     shareDescription: 'Zeskanuj kod QR na innym urządzeniu albo skopiuj bezpośredni link.',
@@ -293,6 +294,7 @@ const i18n = {
     expiryCurrentNever: 'This clip does not expire.',
     clipUnavailable: 'This clip has expired or was deleted.',
     share: 'Share',
+    moreActions: 'More actions',
     shareTitle: 'Wklejka clip',
     shareDialogTitle: 'Share clip',
     shareDescription: 'Scan the QR code on another device or copy the direct link.',
@@ -520,6 +522,7 @@ let totalClips = 0;
 let clipsLoadingMore = false;
 let searchDebounceTimer = null;
 let wsReconcileTimer = null;
+let wsReconcileFocus = null;
 let selectionMode = false;
 const selectedClipIds = new Set();
 let bulkDeleteLimit = 100;
@@ -959,13 +962,21 @@ function addClipToCurrentQuery(clip) {
   return true;
 }
 
-function scheduleClipsReconcile(delay = 120) {
+function scheduleClipsReconcile(delay = 120, focusAfter = null) {
   clearTimeout(wsReconcileTimer);
+  if (focusAfter) wsReconcileFocus = focusAfter;
   wsReconcileTimer = setTimeout(() => {
-    if (!navigator.onLine) return;
-    loadClips(currentBoardId, { append: false }).catch(error => {
-      console.warn('Clip reconciliation failed:', error);
-    });
+    const restoreFocus = wsReconcileFocus;
+    wsReconcileFocus = null;
+    if (!navigator.onLine) {
+      restoreFocus?.();
+      return;
+    }
+    loadClips(currentBoardId, { append: false })
+      .catch(error => {
+        console.warn('Clip reconciliation failed:', error);
+      })
+      .finally(() => restoreFocus?.());
   }, delay);
 }
 
@@ -1138,7 +1149,11 @@ async function updateClipMetadata(boardId, clipId, body, button) {
       clips.sort(compareClipOrder);
       clipStateVersion++;
       renderClips();
-      if (body.pinned !== undefined) scheduleClipsReconcile();
+      if (body.pinned !== undefined) {
+        const restoreFocus = () => clipActionElement(boardId, clipId, 'more')?.focus();
+        restoreFocus();
+        scheduleClipsReconcile(120, restoreFocus);
+      }
     }
     return updated;
   } catch (error) {
@@ -1696,6 +1711,8 @@ function createClipElement(clip, boardId = currentBoardId) {
   el.className = 'clip' + (selectedClipIds.has(clip.id) ? ' is-selected' : '');
   el.dataset.id = clip.id;
   const article = document.createElement('article');
+  const board = boards.find(item => item.id === boardId);
+  const isLocked = !!board?.locked;
 
   // Header
   const header = document.createElement('div');
@@ -1826,26 +1843,42 @@ function createClipElement(clip, boardId = currentBoardId) {
   article.appendChild(content);
 
   // Actions
+  const actionMenu = document.createElement('details');
+  actionMenu.className = 'clip-more';
+  const actionMenuTrigger = document.createElement('summary');
+  actionMenuTrigger.className = 'clip-more-trigger';
+  actionMenuTrigger.textContent = '⋯';
+  actionMenuTrigger.dataset.action = 'more';
+  actionMenuTrigger.setAttribute('aria-label', t('moreActions'));
+  actionMenuTrigger.title = t('moreActions');
+  actionMenuTrigger.addEventListener('click', () => closeOtherClipActionMenus(actionMenu));
   const actions = document.createElement('div');
-  actions.className = 'clip-actions';
-  const board = boards.find(item => item.id === boardId);
-  const isLocked = !!board?.locked;
+  actions.className = 'clip-more-actions';
 
   if (clip.type === 'text' && !isLocked) {
     const editBtn = document.createElement('button');
+    editBtn.type = 'button';
     editBtn.textContent = t('edit');
-    editBtn.addEventListener('click', () => startEditClip(boardId, clip, el));
+    editBtn.addEventListener('click', () => {
+      actionMenu.open = false;
+      startEditClip(boardId, clip, el);
+    });
     actions.appendChild(editBtn);
   }
 
   if (clip.type === 'image') {
     const dlBtn = document.createElement('button');
+    dlBtn.type = 'button';
     dlBtn.textContent = t('download');
-    dlBtn.addEventListener('click', () => downloadClip(clip));
+    dlBtn.addEventListener('click', () => {
+      actionMenu.open = false;
+      downloadClip(clip);
+    });
     actions.appendChild(dlBtn);
   }
 
   const shareBtn = document.createElement('button');
+  shareBtn.type = 'button';
   shareBtn.textContent = t('share');
   shareBtn.dataset.action = 'share';
   shareBtn.addEventListener('click', () => openShareModal(boardId, clip, shareBtn));
@@ -1853,17 +1886,26 @@ function createClipElement(clip, boardId = currentBoardId) {
 
   if (!isLocked) {
     const pinBtn = document.createElement('button');
+    pinBtn.type = 'button';
     pinBtn.textContent = clip.pinned ? t('unpin') : t('pin');
-    pinBtn.addEventListener('click', () => updateClipMetadata(boardId, clip.id, { pinned: !clip.pinned }, pinBtn));
+    pinBtn.addEventListener('click', async () => {
+      try {
+        await updateClipMetadata(boardId, clip.id, { pinned: !clip.pinned }, pinBtn);
+      } catch {
+        // updateClipMetadata already reports the error and leaves the menu usable.
+      }
+    });
     actions.appendChild(pinBtn);
 
     const expiryBtn = document.createElement('button');
+    expiryBtn.type = 'button';
     expiryBtn.textContent = t('expiryAction');
     expiryBtn.dataset.action = 'expiry';
     expiryBtn.addEventListener('click', () => openClipExpiryModal(boardId, clip, expiryBtn));
     actions.appendChild(expiryBtn);
 
     const delBtn = document.createElement('button');
+    delBtn.type = 'button';
     delBtn.className = 'btn-delete';
     delBtn.textContent = t('delete');
     let deleteConfirmTimeout;
@@ -1885,9 +1927,16 @@ function createClipElement(clip, boardId = currentBoardId) {
     actions.appendChild(delBtn);
   }
 
-  article.appendChild(actions);
+  actionMenu.append(actionMenuTrigger, actions);
+  headerActions.appendChild(actionMenu);
   el.appendChild(article);
   return el;
+}
+
+function closeOtherClipActionMenus(currentMenu = null) {
+  document.querySelectorAll('.clip-more[open]').forEach(menu => {
+    if (menu !== currentMenu) menu.open = false;
+  });
 }
 
 function renderClips() {
@@ -2604,7 +2653,11 @@ $('#manage-delete').addEventListener('click', async () => {
 function clipActionElement(boardId, clipId, action) {
   if (boardId !== currentBoardId) return null;
   const card = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
-  return card?.querySelector(`button[data-action="${action}"]`) || null;
+  const requested = card?.querySelector(`[data-action="${action}"]`) || null;
+  if (isAvailableFocusTarget(requested)) return requested;
+  return card?.querySelector('.clip-more-trigger')
+    || card?.querySelector('.clip-primary-action')
+    || null;
 }
 
 function openClipExpiryModal(boardId, clip, opener) {
@@ -2930,6 +2983,23 @@ $('#notification-btn').addEventListener('click', async () => {
     // The browser may reject permission prompts without changing state.
   }
   updateNotificationButton();
+});
+
+document.addEventListener('click', (event) => {
+  if (event.target instanceof Element && event.target.closest('dialog')) return;
+  document.querySelectorAll('.clip-more[open]').forEach(menu => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+  const focusedMenu = document.activeElement?.closest?.('.clip-more[open]');
+  const menu = focusedMenu || document.querySelector('.clip-more[open]');
+  if (!menu) return;
+  event.preventDefault();
+  menu.open = false;
+  menu.querySelector('.clip-more-trigger')?.focus();
 });
 
 connectWS();
