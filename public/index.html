@@ -58,9 +58,9 @@
       <div class="paste-actions">
         <span class="hint">Ctrl+Enter = wy&#347;lij &nbsp;|&nbsp; Ctrl+V = wklej obrazek</span>
         <div class="paste-buttons">
-          <button id="file-btn" class="btn btn-secondary" type="button">Za&#322;&#261;cz plik</button>
+          <button id="file-btn" class="btn btn-secondary" type="button" disabled>Za&#322;&#261;cz plik</button>
           <input id="file-input" type="file" multiple hidden>
-          <button id="send-btn" class="btn btn-primary" type="button">Wy&#347;lij</button>
+          <button id="send-btn" class="btn btn-primary" type="button" disabled>Wy&#347;lij</button>
         </div>
       </div>
       </section>
@@ -111,7 +111,7 @@
       <h2 id="modal-title">Nowa karta</h2>
       <label class="modal-label">
         <span id="modal-name-label">Nazwa</span>
-        <input id="modal-name" type="text" autocomplete="off">
+        <input id="modal-name" type="text" autocomplete="off" required>
       </label>
       <label class="modal-label">
         <span id="modal-expires-label">Wygasa po</span>
@@ -125,7 +125,7 @@
       </label>
       <div class="modal-actions">
         <button id="modal-cancel" class="btn btn-secondary" type="button">Anuluj</button>
-        <button id="modal-create" class="btn btn-primary" type="button">Utw&oacute;rz</button>
+        <button id="modal-create" class="btn btn-primary" type="button" disabled>Utw&oacute;rz</button>
       </div>
     </form>
   </dialog>

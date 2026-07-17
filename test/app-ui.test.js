@@ -245,6 +245,9 @@ test('repeated keyboard submission creates one in-flight clip per board', async 
       assert.ok(input);
       input.value = 'Send once';
       input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+      const send = /** @type {HTMLButtonElement} */ (app.document.querySelector('#send-btn'));
+      assert.ok(send);
+      assert.equal(send.disabled, false);
       const eventInit = { key: 'Enter', bubbles: true, cancelable: true, [modifier]: true };
       input.dispatchEvent(new app.window.KeyboardEvent('keydown', eventInit));
       input.dispatchEvent(new app.window.KeyboardEvent('keydown', eventInit));
@@ -254,10 +257,12 @@ test('repeated keyboard submission creates one in-flight clip per board', async 
         'clip creation request',
       );
       assert.equal(app.calls.filter(call => call.method === 'POST').length, 1);
+      assert.equal(send.disabled, true);
 
       releasePost.resolve();
       await waitFor(() => input.value === '', 'successful submission');
       assert.equal(app.calls.filter(call => call.method === 'POST').length, 1);
+      assert.equal(send.disabled, true);
     });
   }
 });
@@ -597,4 +602,68 @@ test('pinning restores focus after the reconciled clip render', async (t) => {
       && app.document.activeElement?.matches('.clip-more-trigger'),
     'pin reconciliation and focus restoration',
   );
+});
+
+test('composer enables submission only for valid, idle text', async (t) => {
+  let failNextPost = true;
+  const app = await bootApp({
+    handleRequest(call) {
+      if (call.method !== 'POST' || call.url.pathname !== '/api/boards/default/clips') return null;
+      if (failNextPost) {
+        failNextPost = false;
+        return jsonResponse({ error: 'Temporary failure' }, 503);
+      }
+      return jsonResponse({
+        id: 'created-after-retry',
+        type: 'text',
+        content: call.body.content,
+        createdAt: Date.now(),
+      });
+    },
+  });
+  t.after(app.close);
+
+  const input = /** @type {HTMLTextAreaElement} */ (app.document.querySelector('#text-input'));
+  const send = /** @type {HTMLButtonElement} */ (app.document.querySelector('#send-btn'));
+  assert.ok(input);
+  assert.ok(send);
+  assert.equal(send.disabled, true);
+
+  input.value = '   ';
+  input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(send.disabled, true);
+
+  input.value = 'Keep this draft';
+  input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(send.disabled, false);
+  send.click();
+  await waitFor(() => app.calls.filter(call => call.method === 'POST').length === 1
+    && send.disabled === false, 'failed submission state');
+  assert.equal(input.value, 'Keep this draft');
+
+  send.click();
+  await waitFor(() => input.value === '' && send.disabled, 'successful retry state');
+  assert.equal(app.calls.filter(call => call.method === 'POST').length, 2);
+});
+
+test('new board creation requires a non-empty name', async (t) => {
+  const app = await bootApp();
+  t.after(app.close);
+
+  const open = /** @type {HTMLButtonElement} */ (app.document.querySelector('#add-board-btn'));
+  const name = /** @type {HTMLInputElement} */ (app.document.querySelector('#modal-name'));
+  const create = /** @type {HTMLButtonElement} */ (app.document.querySelector('#modal-create'));
+  assert.ok(open);
+  assert.ok(name);
+  assert.ok(create);
+  assert.equal(name.required, true);
+
+  open.click();
+  assert.equal(create.disabled, true);
+  name.value = '   ';
+  name.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(create.disabled, true);
+  name.value = 'Projekt';
+  name.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(create.disabled, false);
 });

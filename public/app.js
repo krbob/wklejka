@@ -572,6 +572,7 @@ function restoreDraft(boardId) {
   textarea.value = draftFor(boardId);
   textarea.style.height = 'auto';
   textarea.style.height = Math.min(textarea.scrollHeight, 300) + 'px';
+  updateComposerState();
 }
 
 function selectBoard(boardId, { clearHash = true } = {}) {
@@ -680,8 +681,7 @@ function renderBoardSummary() {
   const locked = !!board.locked;
   $('#text-input').readOnly = locked;
   $('#text-input').placeholder = locked ? t('boardLocked') : t('placeholder');
-  $('#send-btn').disabled = locked || textSendInFlightBoards.has(currentBoardId);
-  $('#file-btn').disabled = locked;
+  updateComposerState();
   if (locked && selectionMode) {
     selectionMode = false;
     selectedClipIds.clear();
@@ -702,6 +702,14 @@ function renderBoardSummary() {
     badge.textContent = expiry;
     badges.appendChild(badge);
   }
+}
+
+function updateComposerState() {
+  const board = boards.find(item => item.id === currentBoardId);
+  const locked = !!board?.locked;
+  const hasText = !!$('#text-input').value.trim();
+  $('#send-btn').disabled = locked || !hasText || textSendInFlightBoards.has(currentBoardId);
+  $('#file-btn').disabled = locked || !board;
 }
 
 // --- API helpers ---
@@ -2185,9 +2193,8 @@ async function sendText() {
   const text = textarea.value;
   if (!text.trim()) return;
   saveDraft(boardId, text);
-  const sendButton = $('#send-btn');
   textSendInFlightBoards.add(boardId);
-  sendButton.disabled = true;
+  updateComposerState();
   try {
     await sendClip(boardId, 'text', text);
     if (draftFor(boardId) === text) saveDraft(boardId, '');
@@ -2199,8 +2206,7 @@ async function sendText() {
     // Keep the exact draft for retry, including leading and trailing whitespace.
   } finally {
     textSendInFlightBoards.delete(boardId);
-    sendButton.disabled = textSendInFlightBoards.has(currentBoardId)
-      || !!boards.find(board => board.id === currentBoardId)?.locked;
+    updateComposerState();
   }
 }
 
@@ -2332,6 +2338,7 @@ $('#text-input').addEventListener('input', function () {
   saveDraft(currentBoardId, this.value);
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 300) + 'px';
+  updateComposerState();
 });
 
 // --- Utilities ---
@@ -2455,6 +2462,7 @@ function prepareDialog(dialog) {
 function openNewBoardModal(event) {
   $('#modal-name').value = '';
   $('#modal-expires').value = '';
+  updateNewBoardCreateState();
   openDialog($('#new-board-modal'), $('#modal-name'), event?.currentTarget);
 }
 
@@ -2463,6 +2471,12 @@ function closeNewBoardModal() {
 }
 
 $('#modal-cancel').addEventListener('click', closeNewBoardModal);
+
+function updateNewBoardCreateState() {
+  $('#modal-create').disabled = !$('#modal-name').value.trim();
+}
+
+$('#modal-name').addEventListener('input', updateNewBoardCreateState);
 
 $('#modal-create').addEventListener('click', async () => {
   const name = $('#modal-name').value.trim();
@@ -2476,7 +2490,7 @@ $('#modal-create').addEventListener('click', async () => {
   } catch (error) {
     showToast(error.message);
   } finally {
-    button.disabled = false;
+    updateNewBoardCreateState();
   }
 });
 
