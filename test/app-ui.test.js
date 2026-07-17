@@ -599,6 +599,46 @@ test('clip action disclosures keep only one menu open and support Escape', async
   assert.equal(menus[0].open, false);
 });
 
+test('clip action disclosure stays in the viewport and repositions on resize', async (t) => {
+  const app = await bootApp({
+    clips: [{ id: 'positioned', type: 'text', content: 'Position me', createdAt: Date.now() }],
+  });
+  t.after(app.close);
+
+  Object.defineProperty(app.window, 'innerHeight', { configurable: true, value: 720 });
+  const menu = /** @type {HTMLDetailsElement} */ (app.document.querySelector('.clip-more'));
+  const trigger = /** @type {HTMLElement} */ (menu.querySelector('.clip-more-trigger'));
+  const actions = /** @type {HTMLElement} */ (menu.querySelector('.clip-more-actions'));
+  assert.ok(menu);
+  assert.ok(trigger);
+  assert.ok(actions);
+  Object.defineProperty(actions, 'scrollHeight', { configurable: true, value: 234 });
+  trigger.getBoundingClientRect = () => /** @type {DOMRect} */ ({ top: 487, bottom: 531 });
+
+  trigger.click();
+  await waitFor(() => menu.open && menu.classList.contains('opens-up'), 'upward action menu');
+  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '473px');
+
+  trigger.getBoundingClientRect = () => /** @type {DOMRect} */ ({ top: 100, bottom: 144 });
+  app.window.dispatchEvent(new app.window.Event('resize'));
+  await waitFor(
+    () => menu.open
+      && !menu.classList.contains('opens-up')
+      && actions.style.getPropertyValue('--clip-menu-max-height') === '562px',
+    'repositioned action menu',
+  );
+  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '562px');
+
+  trigger.click();
+  await waitFor(
+    () => !menu.open
+      && !menu.classList.contains('opens-up')
+      && actions.style.getPropertyValue('--clip-menu-max-height') === '',
+    'reset action menu position',
+  );
+  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '');
+});
+
 test('pinning restores focus after the reconciled clip render', async (t) => {
   const app = await bootApp({
     clips: [{ id: 'pinnable', type: 'text', content: 'Pin me', createdAt: Date.now() - 1_000 }],

@@ -1883,6 +1883,14 @@ function createClipElement(clip, boardId = currentBoardId) {
   actionMenuTrigger.addEventListener('click', () => closeOtherClipActionMenus(actionMenu));
   const actions = document.createElement('div');
   actions.className = 'clip-more-actions';
+  actionMenu.addEventListener('toggle', () => {
+    if (!actionMenu.open) {
+      resetClipActionMenuPosition(actionMenu);
+      return;
+    }
+    closeOtherClipActionMenus(actionMenu);
+    positionClipActionMenu(actionMenu);
+  });
 
   if (clip.type === 'text' && !isLocked) {
     const editBtn = document.createElement('button');
@@ -1965,6 +1973,43 @@ function createClipElement(clip, boardId = currentBoardId) {
 function closeOtherClipActionMenus(currentMenu = null) {
   document.querySelectorAll('.clip-more[open]').forEach(menu => {
     if (menu !== currentMenu) menu.open = false;
+  });
+}
+
+function resetClipActionMenuPosition(menu) {
+  menu.classList.remove('opens-up');
+  menu.querySelector('.clip-more-actions')?.style.removeProperty('--clip-menu-max-height');
+}
+
+function positionClipActionMenu(menu) {
+  const actions = menu.querySelector('.clip-more-actions');
+  const trigger = menu.querySelector('.clip-more-trigger');
+  if (!menu.open || !actions || !trigger) return;
+
+  resetClipActionMenuPosition(menu);
+  const triggerRect = trigger.getBoundingClientRect();
+  const viewportTop = window.visualViewport?.offsetTop || 0;
+  const viewportHeight = window.visualViewport?.height
+    || window.innerHeight
+    || document.documentElement.clientHeight;
+  const viewportBottom = viewportTop + viewportHeight;
+  const gap = 6;
+  const viewportPadding = 8;
+  const spaceBelow = Math.max(0, viewportBottom - triggerRect.bottom - gap - viewportPadding);
+  const spaceAbove = Math.max(0, triggerRect.top - viewportTop - gap - viewportPadding);
+  const opensUp = actions.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
+  const availableHeight = Math.floor(opensUp ? spaceAbove : spaceBelow);
+
+  menu.classList.toggle('opens-up', opensUp);
+  actions.style.setProperty('--clip-menu-max-height', `${availableHeight}px`);
+}
+
+let clipMenuPositionFrame = 0;
+function scheduleOpenClipActionMenusPosition() {
+  if (clipMenuPositionFrame) return;
+  clipMenuPositionFrame = requestAnimationFrame(() => {
+    clipMenuPositionFrame = 0;
+    document.querySelectorAll('.clip-more[open]').forEach(positionClipActionMenu);
   });
 }
 
@@ -3061,6 +3106,11 @@ document.addEventListener('keydown', (event) => {
   menu.open = false;
   menu.querySelector('.clip-more-trigger')?.focus();
 });
+
+window.addEventListener('resize', scheduleOpenClipActionMenusPosition);
+window.addEventListener('scroll', scheduleOpenClipActionMenusPosition, { passive: true });
+window.visualViewport?.addEventListener('resize', scheduleOpenClipActionMenusPosition);
+window.visualViewport?.addEventListener('scroll', scheduleOpenClipActionMenusPosition);
 
 connectWS();
 syncFromServer();
