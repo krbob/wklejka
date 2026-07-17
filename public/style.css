@@ -369,9 +369,38 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   margin-bottom: 10px;
   font-size: 0.82rem;
   color: var(--text-secondary);
+}
+
+.clip-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.clip-primary-action {
+  min-width: 88px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary-light);
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.clip-primary-action:hover {
+  border-color: var(--action-bg);
+  background: var(--action-bg);
+  color: var(--action-text);
 }
 
 .clip-content {
@@ -887,7 +916,8 @@ main {
 
 /* --- Copy success animation --- */
 
-.clip-actions button.copy-success {
+.clip-actions button.copy-success,
+.clip-primary-action.copy-success {
   color: #22c55e;
   border-color: #22c55e;
   animation: pulse-success 0.35s ease;
@@ -1615,5 +1645,13 @@ article.clip {
 
   .clip-meta {
     align-items: flex-start;
+  }
+
+  .clip-header {
+    align-items: flex-start;
+  }
+
+  .clip-header-actions {
+    gap: 6px;
   }
 }

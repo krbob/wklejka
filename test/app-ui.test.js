@@ -433,3 +433,43 @@ test('unlock input has a static label and prompt description', async (t) => {
   assert.equal(input.labels?.length, 1);
   assert.equal(input.labels?.[0], label);
 });
+
+test('each clip type exposes one primary action in its header', async (t) => {
+  const app = await bootApp({
+    clips: [
+      { id: 'text', type: 'text', content: 'Text', createdAt: Date.now() - 3_000 },
+      {
+        id: 'image',
+        type: 'image',
+        imageUrl: '/images/example.png',
+        createdAt: Date.now() - 2_000,
+      },
+      {
+        id: 'file',
+        type: 'file',
+        originalName: 'example.pdf',
+        fileUrl: '/files/example.pdf',
+        createdAt: Date.now() - 1_000,
+      },
+    ],
+  });
+  t.after(app.close);
+
+  const expected = new Map([
+    ['text', 'Kopiuj'],
+    ['image', 'Kopiuj'],
+    ['file', 'Pobierz'],
+  ]);
+  for (const [id, label] of expected) {
+    const clip = app.document.querySelector(`.clip[data-id="${id}"]`);
+    assert.ok(clip);
+    const primaryActions = clip.querySelectorAll('.clip-header .clip-primary-action');
+    assert.equal(primaryActions.length, 1);
+    assert.equal(primaryActions[0].textContent, label);
+  }
+
+  const fileClip = app.document.querySelector('.clip[data-id="file"]');
+  assert.equal(fileClip.querySelector('.clip-actions')?.textContent.includes('Pobierz'), false);
+  const imageClip = app.document.querySelector('.clip[data-id="image"]');
+  assert.equal(imageClip.querySelector('.clip-actions')?.textContent.includes('Pobierz'), true);
+});

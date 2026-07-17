@@ -1736,8 +1736,23 @@ function createClipElement(clip, boardId = currentBoardId) {
   time.dataset.ts = clip.createdAt;
   time.dateTime = new Date(clip.createdAt).toISOString();
   article.setAttribute('aria-label', `${typeLabel.textContent}, ${time.textContent}`);
+
+  const headerActions = document.createElement('div');
+  headerActions.className = 'clip-header-actions';
+  headerActions.appendChild(time);
+  const primaryAction = document.createElement('button');
+  primaryAction.type = 'button';
+  primaryAction.className = 'clip-primary-action';
+  if (clip.type === 'file') {
+    primaryAction.textContent = t('download');
+    primaryAction.addEventListener('click', () => downloadClip(clip));
+  } else {
+    primaryAction.textContent = t('copy');
+    primaryAction.addEventListener('click', () => copyClip(clip, primaryAction));
+  }
+  headerActions.appendChild(primaryAction);
   header.appendChild(meta);
-  header.appendChild(time);
+  header.appendChild(headerActions);
   article.appendChild(header);
 
   // Content
@@ -1816,13 +1831,6 @@ function createClipElement(clip, boardId = currentBoardId) {
   const board = boards.find(item => item.id === boardId);
   const isLocked = !!board?.locked;
 
-  if (clip.type !== 'file') {
-    const copyBtn = document.createElement('button');
-    copyBtn.textContent = t('copy');
-    copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
-    actions.appendChild(copyBtn);
-  }
-
   if (clip.type === 'text' && !isLocked) {
     const editBtn = document.createElement('button');
     editBtn.textContent = t('edit');
@@ -1830,7 +1838,7 @@ function createClipElement(clip, boardId = currentBoardId) {
     actions.appendChild(editBtn);
   }
 
-  if (clip.type === 'image' || clip.type === 'file') {
+  if (clip.type === 'image') {
     const dlBtn = document.createElement('button');
     dlBtn.textContent = t('download');
     dlBtn.addEventListener('click', () => downloadClip(clip));
