@@ -16,7 +16,7 @@
   --action-hover: #4338ca;
   --action-text: #ffffff;
   --text: #1e293b;
-  --text-secondary: #64748b;
+  --text-secondary: #5f6f82;
   --border: #e2e8f0;
   --danger: #b91c1c;
   --danger-hover: #991b1b;
@@ -65,6 +65,11 @@ body {
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
 /* --- Header --- */
@@ -1083,10 +1088,6 @@ main {
   cursor: pointer;
 }
 
-.tab-item:has(.tab.active) .tab-manage {
-  color: var(--action-text);
-}
-
 .connection-status {
   display: inline-flex;
   align-items: center;
@@ -1346,6 +1347,11 @@ article.clip {
     z-index: 20;
     top: 0;
     padding: 8px 10px;
+  }
+
+  #main-content,
+  #board-panel {
+    scroll-margin-top: 68px;
   }
 
   .add-board-btn {

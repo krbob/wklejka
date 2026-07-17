@@ -319,3 +319,117 @@ test('an unavailable clip target is reported and removed from the URL', async (t
     });
   }
 });
+
+test('board management stays outside the tablist and follows the active board', async (t) => {
+  const customBoard = {
+    id: 'project',
+    name: 'Projekt',
+    createdAt: Date.now() - 30_000,
+  };
+  const app = await bootApp({
+    boards: [
+      { id: 'default', name: 'Schowek', createdAt: Date.now() - 60_000 },
+      customBoard,
+    ],
+  });
+  t.after(app.close);
+
+  const tablist = app.document.querySelector('#tabs');
+  const manageButton = /** @type {HTMLButtonElement} */ (
+    app.document.querySelector('#manage-board-btn')
+  );
+  assert.ok(tablist);
+  assert.ok(manageButton);
+  assert.equal(tablist.contains(manageButton), false);
+  assert.equal(tablist.querySelector('button:not([role="tab"])'), null);
+  assert.equal(tablist.querySelector('[aria-haspopup]'), null);
+  assert.equal(manageButton.hidden, true);
+
+  const customTab = /** @type {HTMLButtonElement} */ (
+    tablist.querySelector(`[role="tab"][data-board-id="${customBoard.id}"]`)
+  );
+  assert.ok(customTab);
+  customTab.click();
+
+  await waitFor(
+    () => app.document.querySelector('#board-heading')?.textContent === customBoard.name
+      && app.document.querySelector('#clips')?.getAttribute('aria-busy') === 'false'
+      && app.calls.some(call => call.method === 'GET'
+        && call.url.pathname === `/api/boards/${customBoard.id}/clips`),
+    'custom board load',
+  );
+
+  assert.equal(manageButton.hidden, false);
+  assert.equal(manageButton.getAttribute('aria-label'), 'Zarządzaj kartą Projekt');
+});
+
+test('theme toggle accessible name includes its visible state', async (t) => {
+  const app = await bootApp();
+  t.after(app.close);
+
+  const toggle = /** @type {HTMLButtonElement} */ (app.document.querySelector('#theme-toggle'));
+  assert.ok(toggle);
+  for (let index = 0; index < 3; index++) {
+    const visibleState = toggle.textContent.trim();
+    assert.ok(visibleState);
+    assert.match(toggle.getAttribute('aria-label') || '', new RegExp(`${visibleState}$`));
+    toggle.click();
+  }
+});
+
+test('storage dialog focuses its title while the status request is pending', async (t) => {
+  const releaseStatus = createDeferred();
+  const app = await bootApp({
+    async handleRequest(call) {
+      if (call.method !== 'GET' || call.url.pathname !== '/api/status') return null;
+      await releaseStatus.promise;
+      return jsonResponse({
+        boards: 1,
+        clips: 0,
+        websocketClients: 0,
+        storage: { usedBytes: 0, activeUploadBytes: 0, maxBytes: 1024 },
+        limits: { maxClipsPerBoard: 100, maxTotalClips: 1000, maxBulkDelete: 100 },
+      });
+    },
+  });
+  t.after(app.close);
+
+  const storageButton = /** @type {HTMLButtonElement} */ (app.document.querySelector('#storage-btn'));
+  const storageTitle = /** @type {HTMLElement} */ (app.document.querySelector('#storage-title'));
+  const refreshButton = /** @type {HTMLButtonElement} */ (
+    app.document.querySelector('#storage-refresh')
+  );
+  assert.ok(storageButton);
+  assert.ok(storageTitle);
+  assert.ok(refreshButton);
+  storageButton.click();
+
+  await waitFor(
+    () => app.calls.some(call => call.method === 'GET' && call.url.pathname === '/api/status'),
+    'pending storage status request',
+  );
+  await waitFor(() => app.document.activeElement === storageTitle, 'storage title focus');
+  assert.equal(refreshButton.disabled, true);
+
+  releaseStatus.resolve();
+  await waitFor(() => refreshButton.disabled === false, 'completed storage status request');
+});
+
+test('unlock input has a static label and prompt description', async (t) => {
+  const app = await bootApp();
+  t.after(app.close);
+
+  const input = /** @type {HTMLInputElement} */ (app.document.querySelector('#unlock-input'));
+  const label = app.document.querySelector('label[for="unlock-input"]');
+  const labelText = app.document.querySelector('#unlock-name-label');
+  assert.ok(input);
+  assert.ok(label);
+  assert.ok(labelText);
+  assert.equal(label.contains(input), true);
+  assert.equal(label.contains(labelText), true);
+  assert.equal(labelText.classList.contains('visually-hidden'), true);
+  assert.equal(labelText.textContent, 'Nazwa');
+  assert.equal(input.getAttribute('aria-describedby'), 'unlock-prompt');
+  assert.equal(input.labels?.length, 1);
+  assert.equal(input.labels?.[0], label);
+});

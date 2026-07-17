@@ -389,6 +389,7 @@ function updateStaticTexts() {
   // Modal texts
   $('#modal-title').textContent = t('newTabTitle');
   $('#modal-name-label').textContent = t('boardNameLabel');
+  $('#unlock-name-label').textContent = t('boardNameLabel');
   $('#modal-expires-label').textContent = t('expiresLabel');
   $('#modal-cancel').textContent = t('cancel');
   $('#modal-create').textContent = t('create');
@@ -485,7 +486,7 @@ function updateThemeToggle() {
   if (!btn) return;
   const labels = { auto: t('themeAuto'), dark: t('themeDark'), light: t('themeLight') };
   btn.textContent = labels[themeMode];
-  btn.setAttribute('aria-label', t('themeToggleLabel'));
+  btn.setAttribute('aria-label', `${t('themeToggleLabel')}: ${labels[themeMode]}`);
 }
 
 // --- State ---
@@ -1479,18 +1480,20 @@ function renderTabs() {
     });
 
     item.appendChild(btn);
-    if (board.id !== 'default') {
-      const manage = document.createElement('button');
-      manage.type = 'button';
-      manage.className = 'tab-manage';
-      manage.textContent = '⋯';
-      manage.setAttribute('aria-haspopup', 'dialog');
-      manage.setAttribute('aria-label', t('boardMenu', { name: board.name }));
-      manage.addEventListener('click', () => openManageBoardModal(board, manage));
-      item.appendChild(manage);
-    }
     nav.appendChild(item);
   });
+
+  const activeBoard = boards.find(board => board.id === currentBoardId);
+  const manageButton = $('#manage-board-btn');
+  manageButton.hidden = !activeBoard || activeBoard.id === 'default';
+  if (!manageButton.hidden) {
+    const label = t('boardMenu', { name: activeBoard.name });
+    manageButton.setAttribute('aria-label', label);
+    manageButton.title = label;
+  } else {
+    manageButton.removeAttribute('aria-label');
+    manageButton.removeAttribute('title');
+  }
 
   // Animate newly added tabs
   const newBoardIds = new Set(boards.map(b => b.id));
@@ -2338,11 +2341,18 @@ function showToast(msg) {
 
 function dialogFocusTarget(dialog) {
   const opener = dialogOpeners.get(dialog);
-  if (opener?.isConnected) return opener;
+  if (isAvailableFocusTarget(opener)) return opener;
   const fallback = dialogFocusFallbacks.get(dialog);
   const fallbackTarget = typeof fallback === 'function' ? fallback() : fallback;
-  if (fallbackTarget?.isConnected) return fallbackTarget;
+  if (isAvailableFocusTarget(fallbackTarget)) return fallbackTarget;
   return document.querySelector('[role="tab"][aria-selected="true"], #selection-toggle, #add-board-btn');
+}
+
+function isAvailableFocusTarget(target) {
+  if (!(target instanceof HTMLElement) || !target.isConnected || target.hidden) return false;
+  if (target.matches(':disabled') || target.closest('[hidden]')) return false;
+  const closedDetails = target.closest('details:not([open])');
+  return !closedDetails || target.matches('summary');
 }
 
 function restoreDialogFocus(dialog) {
@@ -2816,7 +2826,7 @@ function cleanupCounts(result, dryRun) {
 
 function openStorageModal(event) {
   resetCleanupPreview();
-  openDialog($('#storage-modal'), $('#storage-refresh'), event?.currentTarget);
+  openDialog($('#storage-modal'), $('#storage-title'), event?.currentTarget);
   loadStorageStatus();
 }
 
@@ -2892,6 +2902,10 @@ renderConnectionStatus();
   $('#storage-modal'),
 ].forEach(prepareDialog);
 $('#add-board-btn').addEventListener('click', openNewBoardModal);
+$('#manage-board-btn').addEventListener('click', (event) => {
+  const board = boards.find(item => item.id === currentBoardId);
+  if (board && board.id !== 'default') openManageBoardModal(board, event.currentTarget);
+});
 $('#storage-btn').addEventListener('click', openStorageModal);
 $('#retry-btn').addEventListener('click', () => {
   if (ws && ws.readyState !== WebSocket.CLOSED) ws.close();

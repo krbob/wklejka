@@ -40,6 +40,7 @@
 
   <div class="board-bar">
     <nav id="tabs" role="tablist" aria-label="Karty schowka"></nav>
+    <button id="manage-board-btn" class="tab-manage" type="button" aria-haspopup="dialog" aria-controls="manage-board-modal" hidden>⋯</button>
     <button id="add-board-btn" class="add-board-btn" type="button" hidden>+ Nowa karta</button>
   </div>
 
@@ -133,8 +134,9 @@
     <form method="dialog" class="modal">
       <h2 id="unlock-title">Odblokuj kart&#281;</h2>
       <p id="unlock-prompt" class="unlock-prompt"></p>
-      <label class="modal-label">
-        <input id="unlock-input" type="text" autocomplete="off">
+      <label class="modal-label" for="unlock-input">
+        <span id="unlock-name-label" class="visually-hidden">Nazwa</span>
+        <input id="unlock-input" type="text" autocomplete="off" aria-describedby="unlock-prompt">
       </label>
       <div class="modal-actions">
         <button id="unlock-cancel" class="btn btn-secondary" type="button">Anuluj</button>
@@ -209,7 +211,7 @@
 
   <dialog id="storage-modal" class="modal-dialog storage-dialog" aria-labelledby="storage-title">
     <form method="dialog" class="modal">
-      <h2 id="storage-title">Pamięć i konserwacja</h2>
+      <h2 id="storage-title" tabindex="-1">Pamięć i konserwacja</h2>
       <section id="storage-status" aria-live="polite" aria-busy="true">
         <p id="storage-usage-label">Ładowanie…</p>
         <progress id="storage-progress" value="0" max="1" aria-labelledby="storage-usage-label"></progress>
