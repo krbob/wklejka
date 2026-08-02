@@ -98,4 +98,4 @@ Do not run multiple replicas against the same volume. Scaling beyond one instanc
 
 ## Quality gates
 
-`npm run check` combines ESLint, JavaScript type checks, Node tests, integration tests against isolated server processes, and scoped coverage thresholds. CI additionally runs `npm audit`, lints the Dockerfile, builds and smoke-tests the hardened container, and scans the test image. Publication then builds and scans the actual `linux/amd64` and `linux/arm64` images separately; only after both pass are the canonical multi-platform `sha-*` and `latest` manifests created.
+`npm run check` combines ESLint, JavaScript type checks, Node tests, integration tests against isolated server processes, and scoped coverage thresholds. CI additionally lints the Dockerfile, builds and smoke-tests the hardened container. Vulnerability databases and image scanners are not pull-request or publication gates. Publication builds the actual `linux/amd64` and `linux/arm64` images and then creates the canonical multi-platform `sha-*` and `latest` manifests.
