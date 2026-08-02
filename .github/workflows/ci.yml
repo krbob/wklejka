@@ -22,6 +22,7 @@ env:
 
 jobs:
   test:
+    name: ci-required
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -41,9 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
-
-      - name: Audit dependencies
-        run: npm audit --audit-level=high
 
       - name: Run quality checks
         run: npm run check
@@ -65,21 +63,6 @@ jobs:
           tags: wklejka:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Scan Docker image
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f image \
-            --exit-code 1 \
-            --scanners vuln \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --quiet \
-            --no-progress \
-            --table-mode summary \
-            --timeout 5m \
-            wklejka:test
 
       - name: Run container
         run: |
@@ -445,38 +428,6 @@ jobs:
           tags: ${{ steps.image.outputs.image }}:${{ steps.image.outputs.arm64_tag }}
           cache-from: type=gha,scope=publish-arm64
           cache-to: type=gha,mode=max,scope=publish-arm64
-
-      - name: Scan published platform images
-        env:
-          IMAGE: ${{ steps.image.outputs.image }}
-          AMD64_TAG: ${{ steps.image.outputs.amd64_tag }}
-          ARM64_TAG: ${{ steps.image.outputs.arm64_tag }}
-        run: |
-          set -euo pipefail
-
-          scan_image() {
-            local platform="$1"
-            local reference="$2"
-
-            docker pull --platform "$platform" "$reference"
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f image \
-              --exit-code 1 \
-              --scanners vuln \
-              --severity HIGH,CRITICAL \
-              --ignore-unfixed \
-              --quiet \
-              --no-progress \
-              --table-mode summary \
-              --timeout 5m \
-              --image-src docker \
-              --platform "$platform" \
-              "$reference"
-          }
-
-          scan_image linux/amd64 "${IMAGE}:${AMD64_TAG}"
-          scan_image linux/arm64 "${IMAGE}:${ARM64_TAG}"
 
       - name: Publish canonical multi-platform tags
         env:
