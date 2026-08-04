@@ -293,6 +293,17 @@ function setDownloadHeaders(res, { contentType, disposition, filename }) {
   if (contentType) res.type(contentType);
 }
 
+function allowSameOriginFilePreview(res) {
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  const policy = String(res.getHeader('Content-Security-Policy') || '');
+  if (policy) {
+    res.setHeader(
+      'Content-Security-Policy',
+      policy.replace("frame-ancestors 'none'", "frame-ancestors 'self'"),
+    );
+  }
+}
+
 function guessImageMimeType(filename) {
   const ext = path.extname(filename).slice(1).toLowerCase();
   return IMAGE_EXT_TO_MIME.get(ext) || null;
@@ -1786,6 +1797,8 @@ app.get('/api/files/:filename/preview', (req, res) => {
     disposition: 'inline',
     filename: clip?.originalName || filename,
   });
+  // Only this allowlisted media response may be embedded, and only by Wklejka itself.
+  allowSameOriginFilePreview(res);
   res.sendFile(filepath);
 });
 

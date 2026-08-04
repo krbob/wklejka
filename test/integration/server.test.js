@@ -334,6 +334,27 @@ test('streaming uploads persist exact file and image bytes before acknowledging'
   );
 });
 
+test('inline file previews can be framed only by the Wklejka origin', async (t) => {
+  const app = await startApp(t);
+  const uploaded = await upload(app, Buffer.from('%PDF-1.4\n%%EOF\n'), {
+    contentType: 'application/pdf',
+    originalName: 'preview.pdf',
+  });
+  assert.equal(uploaded.status, 200);
+
+  const preview = await request(app, uploaded.body.previewUrl);
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.match(
+    preview.headers.get('content-security-policy') || '',
+    /frame-ancestors 'self'/,
+  );
+
+  const shell = await request(app, '/');
+  assert.equal(shell.headers.get('x-frame-options'), 'DENY');
+  assert.match(shell.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+});
+
 test('legacy data URL uploads require a canonical non-empty payload and valid MIME type', async (t) => {
   const app = await startApp(t);
   const fileBody = Buffer.from('legacy file bytes');
