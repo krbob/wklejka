@@ -339,6 +339,10 @@ main {
   padding: 16px;
   box-shadow: var(--shadow);
   margin-bottom: 12px;
+  /* Keep WebKit's multi-line text selection paint inside the card. */
+  contain: paint;
+  overflow: hidden;
+  overflow: clip;
 }
 
 .clip.clip-focused {
