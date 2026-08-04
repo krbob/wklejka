@@ -55,18 +55,52 @@
     return output;
   }
 
+  function trimUrlEnd(value) {
+    let url = String(value).replace(/[.,;:!?]+$/g, '');
+    const pairs = { ')': '(', ']': '[', '}': '{' };
+    let changed = true;
+    while (changed && url) {
+      changed = false;
+      const closing = url.at(-1);
+      const opening = pairs[closing];
+      if (!opening) continue;
+      const openingCount = [...url].filter(character => character === opening).length;
+      const closingCount = [...url].filter(character => character === closing).length;
+      if (closingCount > openingCount) {
+        url = url.slice(0, -1).replace(/[.,;:!?]+$/g, '');
+        changed = true;
+      }
+    }
+    return url;
+  }
+
+  function findHttpUrls(text) {
+    const source = String(text);
+    const urlRe = /https?:\/\/[^\s<>"']+/g;
+    const matches = [];
+    let match;
+    while ((match = urlRe.exec(source)) !== null) {
+      const url = trimUrlEnd(match[0]);
+      if (!url) continue;
+      matches.push({
+        url,
+        index: match.index,
+        end: match.index + url.length,
+      });
+    }
+    return matches;
+  }
+
   function highlightedTextWithLinks(text) {
     const source = String(text);
     const asCode = looksLikeCode(source);
-    const urlRe = /https?:\/\/[^\s<]+/g;
     let output = '';
     let lastIndex = 0;
-    let match;
-    while ((match = urlRe.exec(source)) !== null) {
+    for (const match of findHttpUrls(source)) {
       output += highlightPlainSegment(source.slice(lastIndex, match.index), asCode);
-      const url = match[0];
+      const { url } = match;
       output += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>`;
-      lastIndex = urlRe.lastIndex;
+      lastIndex = match.end;
     }
     output += highlightPlainSegment(source.slice(lastIndex), asCode);
     return { html: output, asCode };
@@ -74,6 +108,7 @@
 
   return {
     escapeHtml,
+    findHttpUrls,
     highlightedTextWithLinks,
     highlightPlainSegment,
     highlightTokenClass,

@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  findHttpUrls,
   highlightedTextWithLinks,
   highlightPlainSegment,
   looksLikeCode,
@@ -29,6 +30,27 @@ test('highlightedTextWithLinks preserves links and escapes surrounding text', ()
   assert.match(result.html, /<a href="https:\/\/example\.com\/path"/);
   assert.match(result.html, /&lt;b&gt;/);
   assert.doesNotMatch(result.html, /<b>/);
+});
+
+test('URL detection leaves shell and sentence punctuation outside links', () => {
+  const source = '/bin/bash -c "$(curl https://example.com/install.sh)"; see https://example.com/docs.';
+  const matches = findHttpUrls(source);
+
+  assert.deepEqual(matches.map(match => match.url), [
+    'https://example.com/install.sh',
+    'https://example.com/docs',
+  ]);
+  const result = highlightedTextWithLinks(source);
+  assert.match(result.html, /href="https:\/\/example\.com\/install\.sh"/);
+  assert.doesNotMatch(result.html, /href="https:\/\/example\.com\/install\.sh\)/);
+  assert.doesNotMatch(result.html, /href="https:\/\/example\.com\/docs\./);
+});
+
+test('URL detection preserves balanced parentheses in a URL', () => {
+  assert.deepEqual(
+    findHttpUrls('https://example.com/wiki/Function_(math)').map(match => match.url),
+    ['https://example.com/wiki/Function_(math)'],
+  );
 });
 
 test('looksLikeCode detects common code snippets', () => {

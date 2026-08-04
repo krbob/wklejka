@@ -955,6 +955,10 @@ main {
   transition: background 0.15s;
 }
 
+.link-preview-request {
+  margin-top: 10px;
+}
+
 .link-preview:hover {
   background: var(--bg);
 }
@@ -1271,15 +1275,27 @@ article.clip {
 
 .preview-control,
 .media-load-button {
-  min-height: 44px;
-  margin-top: 8px;
-  padding: 8px 12px;
+  min-height: 30px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface);
   color: var(--primary);
-  font: inherit;
+  font-family: inherit;
+  font-size: 0.82rem;
   cursor: pointer;
+}
+
+.preview-control:hover,
+.media-load-button:hover {
+  background: var(--bg);
+}
+
+.file-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .btn-danger {

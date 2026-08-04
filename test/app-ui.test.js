@@ -518,6 +518,75 @@ test('clip actions stay in the compact action row for every clip type', async (t
   }
 });
 
+test('link and file preview controls perform their actions and ignore non-page URLs', async (t) => {
+  const app = await bootApp({
+    clips: [
+      {
+        id: 'script',
+        type: 'text',
+        content: '/bin/bash -c "$(curl -fsSL https://tools.example/install.sh)"',
+        createdAt: Date.now() - 3_000,
+      },
+      {
+        id: 'page',
+        type: 'text',
+        content: 'Read (https://example.com/docs).',
+        createdAt: Date.now() - 2_000,
+      },
+      {
+        id: 'file',
+        type: 'file',
+        originalName: 'example.pdf',
+        fileUrl: '/files/example.pdf',
+        createdAt: Date.now() - 1_000,
+      },
+    ],
+    handleRequest(call) {
+      if (call.method !== 'GET' || call.url.pathname !== '/api/link-preview') return null;
+      assert.equal(call.url.searchParams.get('url'), 'https://example.com/docs');
+      return jsonResponse({
+        title: 'Example documentation',
+        description: 'A useful page',
+        image: '',
+      });
+    },
+  });
+  t.after(app.close);
+
+  const scriptClip = app.document.querySelector('.clip[data-id="script"]');
+  assert.ok(scriptClip);
+  assert.equal(scriptClip.querySelector('.preview-control'), null);
+  assert.equal(
+    scriptClip.querySelector('pre a')?.getAttribute('href'),
+    'https://tools.example/install.sh',
+  );
+
+  const pageButton = /** @type {HTMLButtonElement} */ (
+    app.document.querySelector('.clip[data-id="page"] .preview-control')
+  );
+  assert.ok(pageButton);
+  assert.equal(pageButton.parentElement?.className, 'link-preview-request');
+  pageButton.click();
+  await waitFor(
+    () => app.document.querySelector('.clip[data-id="page"] .link-preview'),
+    'loaded link preview',
+  );
+  const linkPreview = app.document.querySelector('.clip[data-id="page"] .link-preview');
+  assert.equal(linkPreview?.getAttribute('href'), 'https://example.com/docs');
+  assert.match(linkPreview?.textContent || '', /Example documentation/);
+
+  const fileButton = /** @type {HTMLButtonElement} */ (
+    app.document.querySelector('.clip[data-id="file"] .media-load-button')
+  );
+  assert.ok(fileButton);
+  assert.equal(fileButton.parentElement?.className, 'file-summary');
+  fileButton.click();
+  const filePreview = app.document.querySelector('.clip[data-id="file"] .pdf-preview');
+  assert.ok(filePreview);
+  assert.equal(filePreview.getAttribute('src'), '/files/example.pdf/preview');
+  assert.equal(fileButton.isConnected, false);
+});
+
 test('pinning restores focus after the reconciled clip render', async (t) => {
   const app = await bootApp({
     clips: [{ id: 'pinnable', type: 'text', content: 'Pin me', createdAt: Date.now() - 1_000 }],

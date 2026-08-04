@@ -1251,8 +1251,19 @@ function fetchLinkPreview(url) {
   return promise;
 }
 
+function isPreviewablePageUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    return !/\.(?:7z|aac|avi|bin|bz2|csv|dmg|docx?|exe|flac|gif|gz|ico|jpe?g|json|m4a|mov|mp3|mp4|ogg|pdf|png|rar|sh|svg|tar|tgz|txt|wav|webm|webp|xlsx?|xml|zip)$/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
 function renderLinkPreviews(content, text) {
-  const urls = (text.match(/https?:\/\/[^\s]+/g) || []).slice(0, 3);
+  const urls = [...new Set(highlight.findHttpUrls(text).map(match => match.url))]
+    .filter(isPreviewablePageUrl)
+    .slice(0, 3);
   urls.forEach(url => {
     const control = document.createElement('div');
     control.className = 'link-preview-request';
@@ -1277,32 +1288,32 @@ function renderLinkPreviews(content, text) {
       try {
         const preview = await fetchLinkPreview(url);
         if (!control.isConnected) return;
-      const card = document.createElement('a');
-      card.className = 'link-preview';
-      card.href = url;
-      card.target = '_blank';
+        const card = document.createElement('a');
+        card.className = 'link-preview';
+        card.href = url;
+        card.target = '_blank';
         card.rel = 'noopener noreferrer';
-      const info = document.createElement('div');
-      info.className = 'link-preview-info';
-      const title = document.createElement('div');
-      title.className = 'link-preview-title';
-      title.textContent = preview.title;
-      info.appendChild(title);
-      if (preview.description) {
-        const desc = document.createElement('div');
-        desc.className = 'link-preview-desc';
-        desc.textContent = preview.description;
-        info.appendChild(desc);
-      }
+        const info = document.createElement('div');
+        info.className = 'link-preview-info';
+        const title = document.createElement('div');
+        title.className = 'link-preview-title';
+        title.textContent = preview.title;
+        info.appendChild(title);
+        if (preview.description) {
+          const desc = document.createElement('div');
+          desc.className = 'link-preview-desc';
+          desc.textContent = preview.description;
+          info.appendChild(desc);
+        }
         try {
-        const domain = document.createElement('div');
-        domain.className = 'link-preview-domain';
-        domain.textContent = new URL(url).hostname;
-        info.appendChild(domain);
-      } catch {
-        // Omit the optional domain line if the URL cannot be parsed.
-      }
-      card.appendChild(info);
+          const domain = document.createElement('div');
+          domain.className = 'link-preview-domain';
+          domain.textContent = new URL(url).hostname;
+          info.appendChild(domain);
+        } catch {
+          // Omit the optional domain line if the URL cannot be parsed.
+        }
+        card.appendChild(info);
         control.replaceWith(card);
       } catch (error) {
         button.disabled = false;
@@ -1659,7 +1670,7 @@ function clearUnavailableClipTarget() {
   showToast(t('clipUnavailable'));
 }
 
-function appendLazyFilePreview(content, clip, extension, previewUrl) {
+function appendLazyFilePreview(content, summary, clip, extension, previewUrl) {
   const isPdf = extension === 'pdf';
   const isVideo = ['mp4', 'webm', 'mov', 'ogg'].includes(extension);
   const isAudio = ['mp3', 'wav', 'ogg', 'aac', 'm4a', 'flac'].includes(extension);
@@ -1686,9 +1697,10 @@ function appendLazyFilePreview(content, clip, extension, previewUrl) {
       media.className = 'audio-preview';
     }
     media.src = previewUrl;
-    button.replaceWith(media);
+    button.remove();
+    content.appendChild(media);
   }, { once: true });
-  content.appendChild(button);
+  summary.appendChild(button);
 }
 
 function clipExpiryText(clip) {
@@ -1804,6 +1816,8 @@ function createClipElement(clip, boardId = currentBoardId) {
     content.appendChild(link);
   } else if (clip.type === 'file') {
     const previewUrl = clip.previewUrl || `${clip.fileUrl}/preview`;
+    const summary = document.createElement('div');
+    summary.className = 'file-summary';
     const fileInfo = document.createElement('div');
     fileInfo.className = 'file-info';
     const icon = document.createElement('span');
@@ -1818,9 +1832,10 @@ function createClipElement(clip, boardId = currentBoardId) {
     sizeSpan.textContent = formatSize(clip.size);
     fileInfo.appendChild(nameSpan);
     fileInfo.appendChild(sizeSpan);
-    content.appendChild(fileInfo);
+    summary.appendChild(fileInfo);
+    content.appendChild(summary);
     const ext = (clip.originalName || '').toLowerCase().split('.').pop();
-    appendLazyFilePreview(content, clip, ext, previewUrl);
+    appendLazyFilePreview(content, summary, clip, ext, previewUrl);
   } else {
     const pre = document.createElement('pre');
     const highlighted = highlight.highlightedTextWithLinks(clip.content);
