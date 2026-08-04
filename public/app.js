@@ -135,7 +135,6 @@ const i18n = {
     expiryCurrentNever: 'Ten wpis nie wygasa.',
     clipUnavailable: 'Wpis wygasł lub został usunięty.',
     share: 'Udostępnij',
-    moreActions: 'Więcej akcji',
     shareTitle: 'Wpis z Wklejki',
     shareDialogTitle: 'Udostępnij wpis',
     shareDescription: 'Zeskanuj kod QR na innym urządzeniu albo skopiuj bezpośredni link.',
@@ -298,7 +297,6 @@ const i18n = {
     expiryCurrentNever: 'This clip does not expire.',
     clipUnavailable: 'This clip has expired or was deleted.',
     share: 'Share',
-    moreActions: 'More actions',
     shareTitle: 'Wklejka clip',
     shareDialogTitle: 'Share clip',
     shareDescription: 'Scan the QR code on another device or copy the direct link.',
@@ -1179,7 +1177,7 @@ async function updateClipMetadata(boardId, clipId, body, button) {
       clipStateVersion++;
       renderClips();
       if (body.pinned !== undefined) {
-        const restoreFocus = () => clipActionElement(boardId, clipId, 'more')?.focus();
+        const restoreFocus = () => clipActionElement(boardId, clipId, 'pin')?.focus();
         restoreFocus();
         scheduleClipsReconcile(120, restoreFocus);
       }
@@ -1783,22 +1781,8 @@ function createClipElement(clip, boardId = currentBoardId) {
   time.dateTime = new Date(clip.createdAt).toISOString();
   article.setAttribute('aria-label', `${typeLabel.textContent}, ${time.textContent}`);
 
-  const headerActions = document.createElement('div');
-  headerActions.className = 'clip-header-actions';
-  headerActions.appendChild(time);
-  const primaryAction = document.createElement('button');
-  primaryAction.type = 'button';
-  primaryAction.className = 'clip-primary-action';
-  if (clip.type === 'file') {
-    primaryAction.textContent = t('download');
-    primaryAction.addEventListener('click', () => downloadClip(clip));
-  } else {
-    primaryAction.textContent = t('copy');
-    primaryAction.addEventListener('click', () => copyClip(clip, primaryAction));
-  }
-  headerActions.appendChild(primaryAction);
   header.appendChild(meta);
-  header.appendChild(headerActions);
+  header.appendChild(time);
   article.appendChild(header);
 
   // Content
@@ -1872,45 +1856,30 @@ function createClipElement(clip, boardId = currentBoardId) {
   article.appendChild(content);
 
   // Actions
-  const actionMenu = document.createElement('details');
-  actionMenu.className = 'clip-more';
-  const actionMenuTrigger = document.createElement('summary');
-  actionMenuTrigger.className = 'clip-more-trigger';
-  actionMenuTrigger.textContent = '⋯';
-  actionMenuTrigger.dataset.action = 'more';
-  actionMenuTrigger.setAttribute('aria-label', t('moreActions'));
-  actionMenuTrigger.title = t('moreActions');
-  actionMenuTrigger.addEventListener('click', () => closeOtherClipActionMenus(actionMenu));
   const actions = document.createElement('div');
-  actions.className = 'clip-more-actions';
-  actionMenu.addEventListener('toggle', () => {
-    if (!actionMenu.open) {
-      resetClipActionMenuPosition(actionMenu);
-      return;
-    }
-    closeOtherClipActionMenus(actionMenu);
-    positionClipActionMenu(actionMenu);
-  });
+  actions.className = 'clip-actions';
+
+  if (clip.type !== 'file') {
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.textContent = t('copy');
+    copyBtn.addEventListener('click', () => copyClip(clip, copyBtn));
+    actions.appendChild(copyBtn);
+  }
 
   if (clip.type === 'text' && !isLocked) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.textContent = t('edit');
-    editBtn.addEventListener('click', () => {
-      actionMenu.open = false;
-      startEditClip(boardId, clip, el);
-    });
+    editBtn.addEventListener('click', () => startEditClip(boardId, clip, el));
     actions.appendChild(editBtn);
   }
 
-  if (clip.type === 'image') {
+  if (clip.type === 'image' || clip.type === 'file') {
     const dlBtn = document.createElement('button');
     dlBtn.type = 'button';
     dlBtn.textContent = t('download');
-    dlBtn.addEventListener('click', () => {
-      actionMenu.open = false;
-      downloadClip(clip);
-    });
+    dlBtn.addEventListener('click', () => downloadClip(clip));
     actions.appendChild(dlBtn);
   }
 
@@ -1925,11 +1894,12 @@ function createClipElement(clip, boardId = currentBoardId) {
     const pinBtn = document.createElement('button');
     pinBtn.type = 'button';
     pinBtn.textContent = clip.pinned ? t('unpin') : t('pin');
+    pinBtn.dataset.action = 'pin';
     pinBtn.addEventListener('click', async () => {
       try {
         await updateClipMetadata(boardId, clip.id, { pinned: !clip.pinned }, pinBtn);
       } catch {
-        // updateClipMetadata already reports the error and leaves the menu usable.
+        // updateClipMetadata already reports the error and leaves the action usable.
       }
     });
     actions.appendChild(pinBtn);
@@ -1964,53 +1934,9 @@ function createClipElement(clip, boardId = currentBoardId) {
     actions.appendChild(delBtn);
   }
 
-  actionMenu.append(actionMenuTrigger, actions);
-  headerActions.appendChild(actionMenu);
+  article.appendChild(actions);
   el.appendChild(article);
   return el;
-}
-
-function closeOtherClipActionMenus(currentMenu = null) {
-  document.querySelectorAll('.clip-more[open]').forEach(menu => {
-    if (menu !== currentMenu) menu.open = false;
-  });
-}
-
-function resetClipActionMenuPosition(menu) {
-  menu.classList.remove('opens-up');
-  menu.querySelector('.clip-more-actions')?.style.removeProperty('--clip-menu-max-height');
-}
-
-function positionClipActionMenu(menu) {
-  const actions = menu.querySelector('.clip-more-actions');
-  const trigger = menu.querySelector('.clip-more-trigger');
-  if (!menu.open || !actions || !trigger) return;
-
-  resetClipActionMenuPosition(menu);
-  const triggerRect = trigger.getBoundingClientRect();
-  const viewportTop = window.visualViewport?.offsetTop || 0;
-  const viewportHeight = window.visualViewport?.height
-    || window.innerHeight
-    || document.documentElement.clientHeight;
-  const viewportBottom = viewportTop + viewportHeight;
-  const gap = 6;
-  const viewportPadding = 8;
-  const spaceBelow = Math.max(0, viewportBottom - triggerRect.bottom - gap - viewportPadding);
-  const spaceAbove = Math.max(0, triggerRect.top - viewportTop - gap - viewportPadding);
-  const opensUp = actions.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
-  const availableHeight = Math.floor(opensUp ? spaceAbove : spaceBelow);
-
-  menu.classList.toggle('opens-up', opensUp);
-  actions.style.setProperty('--clip-menu-max-height', `${availableHeight}px`);
-}
-
-let clipMenuPositionFrame = 0;
-function scheduleOpenClipActionMenusPosition() {
-  if (clipMenuPositionFrame) return;
-  clipMenuPositionFrame = requestAnimationFrame(() => {
-    clipMenuPositionFrame = 0;
-    document.querySelectorAll('.clip-more[open]').forEach(positionClipActionMenu);
-  });
 }
 
 function renderClips() {
@@ -2738,9 +2664,7 @@ function clipActionElement(boardId, clipId, action) {
   const card = document.querySelector(`.clip[data-id="${CSS.escape(clipId)}"]`);
   const requested = card?.querySelector(`[data-action="${action}"]`) || null;
   if (isAvailableFocusTarget(requested)) return requested;
-  return card?.querySelector('.clip-more-trigger')
-    || card?.querySelector('.clip-primary-action')
-    || null;
+  return card?.querySelector('.clip-actions button') || null;
 }
 
 function openClipExpiryModal(boardId, clip, opener) {
@@ -3085,10 +3009,6 @@ document.addEventListener('click', (event) => {
     && !$('#header-menu-toggle').contains(target)) {
     setHeaderToolsOpen(false);
   }
-  if (event.target instanceof Element && event.target.closest('dialog')) return;
-  document.querySelectorAll('.clip-more[open]').forEach(menu => {
-    if (!menu.contains(event.target)) menu.open = false;
-  });
 });
 
 document.addEventListener('keydown', (event) => {
@@ -3097,20 +3017,8 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     setHeaderToolsOpen(false);
     $('#header-menu-toggle').focus();
-    return;
   }
-  const focusedMenu = document.activeElement?.closest?.('.clip-more[open]');
-  const menu = focusedMenu || document.querySelector('.clip-more[open]');
-  if (!menu) return;
-  event.preventDefault();
-  menu.open = false;
-  menu.querySelector('.clip-more-trigger')?.focus();
 });
-
-window.addEventListener('resize', scheduleOpenClipActionMenusPosition);
-window.addEventListener('scroll', scheduleOpenClipActionMenusPosition, { passive: true });
-window.visualViewport?.addEventListener('resize', scheduleOpenClipActionMenusPosition);
-window.visualViewport?.addEventListener('scroll', scheduleOpenClipActionMenusPosition);
 
 connectWS();
 syncFromServer();

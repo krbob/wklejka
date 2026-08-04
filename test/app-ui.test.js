@@ -209,9 +209,6 @@ test('clip expiry requires an explicit new deadline', async (t) => {
     app.document.querySelector('button[data-action="expiry"]')
   );
   assert.ok(expiryButton);
-  const expiryMenu = /** @type {HTMLDetailsElement} */ (expiryButton.closest('.clip-more'));
-  assert.ok(expiryMenu);
-  expiryMenu.open = true;
   expiryButton.click();
 
   const select = /** @type {HTMLSelectElement} */ (app.document.querySelector('#clip-expiry-value'));
@@ -238,7 +235,7 @@ test('clip expiry requires an explicit new deadline', async (t) => {
     'expiry dialog close',
   );
   await new Promise(resolve => app.window.requestAnimationFrame(() => resolve()));
-  assert.match(app.document.activeElement?.outerHTML || '', /clip-more-trigger/);
+  assert.equal(app.document.activeElement, app.document.querySelector('button[data-action="expiry"]'));
 });
 
 test('repeated keyboard submission creates one in-flight clip per board', async (t) => {
@@ -467,47 +464,7 @@ test('unlock input has a static label and prompt description', async (t) => {
   assert.equal(input.labels?.[0], label);
 });
 
-test('each clip type exposes one primary action in its header', async (t) => {
-  const app = await bootApp({
-    clips: [
-      { id: 'text', type: 'text', content: 'Text', createdAt: Date.now() - 3_000 },
-      {
-        id: 'image',
-        type: 'image',
-        imageUrl: '/images/example.png',
-        createdAt: Date.now() - 2_000,
-      },
-      {
-        id: 'file',
-        type: 'file',
-        originalName: 'example.pdf',
-        fileUrl: '/files/example.pdf',
-        createdAt: Date.now() - 1_000,
-      },
-    ],
-  });
-  t.after(app.close);
-
-  const expected = new Map([
-    ['text', 'Kopiuj'],
-    ['image', 'Kopiuj'],
-    ['file', 'Pobierz'],
-  ]);
-  for (const [id, label] of expected) {
-    const clip = app.document.querySelector(`.clip[data-id="${id}"]`);
-    assert.ok(clip);
-    const primaryActions = clip.querySelectorAll('.clip-header .clip-primary-action');
-    assert.equal(primaryActions.length, 1);
-    assert.equal(primaryActions[0].textContent, label);
-  }
-
-  const fileClip = app.document.querySelector('.clip[data-id="file"]');
-  assert.equal(fileClip.querySelector('.clip-more-actions')?.textContent.includes('Pobierz'), false);
-  const imageClip = app.document.querySelector('.clip[data-id="image"]');
-  assert.equal(imageClip.querySelector('.clip-more-actions')?.textContent.includes('Pobierz'), true);
-});
-
-test('secondary clip actions are grouped by type and board lock state', async (t) => {
+test('clip actions stay in the compact action row for every clip type', async (t) => {
   const clips = [
     { id: 'text', type: 'text', content: 'Text', createdAt: Date.now() - 3_000 },
     {
@@ -529,18 +486,18 @@ test('secondary clip actions are grouped by type and board lock state', async (t
       name: 'unlocked',
       board: { id: 'default', name: 'Schowek', createdAt: Date.now() },
       expected: {
-        text: ['Edytuj', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
-        image: ['Pobierz', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
-        file: ['Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+        text: ['Kopiuj', 'Edytuj', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+        image: ['Kopiuj', 'Pobierz', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
+        file: ['Pobierz', 'Udostępnij', 'Przypnij', 'Wygasanie', 'Usuń'],
       },
     },
     {
       name: 'locked',
       board: { id: 'default', name: 'Schowek', createdAt: Date.now(), locked: true },
       expected: {
-        text: ['Udostępnij'],
-        image: ['Pobierz', 'Udostępnij'],
-        file: ['Udostępnij'],
+        text: ['Kopiuj', 'Udostępnij'],
+        image: ['Kopiuj', 'Pobierz', 'Udostępnij'],
+        file: ['Pobierz', 'Udostępnij'],
       },
     },
   ];
@@ -552,91 +509,13 @@ test('secondary clip actions are grouped by type and board lock state', async (t
       for (const [id, labels] of Object.entries(scenario.expected)) {
         const clip = app.document.querySelector(`.clip[data-id="${id}"]`);
         assert.ok(clip);
-        assert.equal(clip.querySelectorAll(':scope > article > .clip-actions').length, 0);
-        const buttons = [...clip.querySelectorAll('.clip-more-actions > button')];
+        assert.equal(clip.querySelector('.clip-header button'), null);
+        assert.equal(clip.querySelectorAll(':scope > article > .clip-actions').length, 1);
+        const buttons = [...clip.querySelectorAll('.clip-actions > button')];
         assert.deepEqual(buttons.map(button => button.textContent), labels);
       }
     });
   }
-});
-
-test('clip action disclosures keep only one menu open and support Escape', async (t) => {
-  const app = await bootApp({
-    clips: [
-      { id: 'first', type: 'text', content: 'First', createdAt: Date.now() - 2_000 },
-      { id: 'second', type: 'text', content: 'Second', createdAt: Date.now() - 1_000 },
-    ],
-  });
-  t.after(app.close);
-
-  const menus = /** @type {HTMLDetailsElement[]} */ (
-    [...app.document.querySelectorAll('.clip-more')]
-  );
-  const triggers = menus.map(menu => /** @type {HTMLElement} */ (
-    menu.querySelector('.clip-more-trigger')
-  ));
-  assert.equal(menus.length, 2);
-
-  triggers[0].click();
-  await waitFor(() => menus[0].open, 'first action menu');
-  triggers[1].click();
-  await waitFor(() => menus[1].open && !menus[0].open, 'second action menu');
-
-  triggers[1].focus();
-  triggers[1].dispatchEvent(new app.window.KeyboardEvent('keydown', {
-    key: 'Escape',
-    bubbles: true,
-    cancelable: true,
-  }));
-  assert.equal(menus[1].open, false);
-  assert.equal(app.document.activeElement, triggers[1]);
-
-  triggers[0].click();
-  await waitFor(() => menus[0].open, 'reopened first action menu');
-  const heading = /** @type {HTMLElement} */ (app.document.querySelector('#board-heading'));
-  assert.ok(heading);
-  heading.click();
-  assert.equal(menus[0].open, false);
-});
-
-test('clip action disclosure stays in the viewport and repositions on resize', async (t) => {
-  const app = await bootApp({
-    clips: [{ id: 'positioned', type: 'text', content: 'Position me', createdAt: Date.now() }],
-  });
-  t.after(app.close);
-
-  Object.defineProperty(app.window, 'innerHeight', { configurable: true, value: 720 });
-  const menu = /** @type {HTMLDetailsElement} */ (app.document.querySelector('.clip-more'));
-  const trigger = /** @type {HTMLElement} */ (menu.querySelector('.clip-more-trigger'));
-  const actions = /** @type {HTMLElement} */ (menu.querySelector('.clip-more-actions'));
-  assert.ok(menu);
-  assert.ok(trigger);
-  assert.ok(actions);
-  Object.defineProperty(actions, 'scrollHeight', { configurable: true, value: 234 });
-  trigger.getBoundingClientRect = () => /** @type {DOMRect} */ ({ top: 487, bottom: 531 });
-
-  trigger.click();
-  await waitFor(() => menu.open && menu.classList.contains('opens-up'), 'upward action menu');
-  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '473px');
-
-  trigger.getBoundingClientRect = () => /** @type {DOMRect} */ ({ top: 100, bottom: 144 });
-  app.window.dispatchEvent(new app.window.Event('resize'));
-  await waitFor(
-    () => menu.open
-      && !menu.classList.contains('opens-up')
-      && actions.style.getPropertyValue('--clip-menu-max-height') === '562px',
-    'repositioned action menu',
-  );
-  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '562px');
-
-  trigger.click();
-  await waitFor(
-    () => !menu.open
-      && !menu.classList.contains('opens-up')
-      && actions.style.getPropertyValue('--clip-menu-max-height') === '',
-    'reset action menu position',
-  );
-  assert.equal(actions.style.getPropertyValue('--clip-menu-max-height'), '');
 });
 
 test('pinning restores focus after the reconciled clip render', async (t) => {
@@ -645,11 +524,8 @@ test('pinning restores focus after the reconciled clip render', async (t) => {
   });
   t.after(app.close);
 
-  const menu = /** @type {HTMLDetailsElement} */ (app.document.querySelector('.clip-more'));
-  assert.ok(menu);
-  menu.open = true;
   const pin = /** @type {HTMLButtonElement} */ (
-    [...menu.querySelectorAll('button')].find(button => button.textContent === 'Przypnij')
+    app.document.querySelector('.clip-actions button[data-action="pin"]')
   );
   assert.ok(pin);
   pin.focus();
@@ -658,7 +534,7 @@ test('pinning restores focus after the reconciled clip render', async (t) => {
   await waitFor(
     () => app.calls.filter(call => call.method === 'GET'
       && call.url.pathname === '/api/boards/default/clips').length >= 2
-      && app.document.activeElement?.matches('.clip-more-trigger'),
+      && app.document.activeElement?.matches('.clip-actions button[data-action="pin"]'),
     'pin reconciliation and focus restoration',
   );
 });
