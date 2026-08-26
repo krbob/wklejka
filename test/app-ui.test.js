@@ -518,6 +518,34 @@ test('clip actions stay in the compact action row for every clip type', async (t
   }
 });
 
+test('a locked board still accepts new clips while existing clip actions stay protected', async (t) => {
+  const board = { id: 'locked', name: 'Archiwum', createdAt: Date.now(), locked: true };
+  const app = await bootApp({ boards: [board] });
+  t.after(app.close);
+
+  const input = /** @type {HTMLTextAreaElement} */ (app.document.querySelector('#text-input'));
+  const send = /** @type {HTMLButtonElement} */ (app.document.querySelector('#send-btn'));
+  const file = /** @type {HTMLButtonElement} */ (app.document.querySelector('#file-btn'));
+  assert.ok(input);
+  assert.ok(send);
+  assert.ok(file);
+  assert.equal(input.readOnly, false);
+  assert.equal(file.disabled, false);
+
+  input.value = 'Nowy wpis na chronionej karcie';
+  input.dispatchEvent(new app.window.Event('input', { bubbles: true }));
+  assert.equal(send.disabled, false);
+  send.click();
+
+  await waitFor(() => input.value === '', 'locked board clip creation');
+  const creation = app.calls.find(call => call.method === 'POST'
+    && call.url.pathname === '/api/boards/locked/clips');
+  assert.deepEqual(creation?.body, {
+    type: 'text',
+    content: 'Nowy wpis na chronionej karcie',
+  });
+});
+
 test('resume sync keeps rendered clips visible until refreshed data arrives', async (t) => {
   const refresh = createDeferred();
   let clipRequests = 0;

@@ -773,6 +773,48 @@ test('pin and expiry updates validate bounds and can be cleared', async (t) => {
   assert.equal(Object.hasOwn(cleared.body, 'expiresAt'), false);
 });
 
+test('locked boards accept new text and file clips but reject updates and deletions', async (t) => {
+  const app = await startApp(t);
+  const board = await jsonRequest(app, '/api/boards', 'POST', { name: 'Protected inbox' });
+  assert.equal(board.status, 200);
+  const boardPath = `/api/boards/${board.body.id}`;
+  const clipsPath = `${boardPath}/clips`;
+  assert.equal((await jsonRequest(app, boardPath, 'PUT', { locked: true })).status, 200);
+
+  const textClip = await jsonRequest(
+    app,
+    clipsPath,
+    'POST',
+    { type: 'text', content: 'Added after locking' },
+  );
+  assert.equal(textClip.status, 200);
+  const fileClip = await upload(app, Buffer.from('new file'), {
+    boardId: board.body.id,
+    originalName: 'new.txt',
+  });
+  assert.equal(fileClip.status, 200);
+
+  const update = await jsonRequest(
+    app,
+    `${clipsPath}/${textClip.body.id}`,
+    'PUT',
+    { content: 'Changed after locking' },
+  );
+  assert.equal(update.status, 403);
+  assert.equal(update.body.code, 'BOARD_LOCKED');
+  const deletion = await request(app, `${clipsPath}/${textClip.body.id}`, { method: 'DELETE' });
+  assert.equal(deletion.status, 403);
+  assert.equal(deletion.body.code, 'BOARD_LOCKED');
+  assert.equal((await request(app, boardPath, { method: 'DELETE' })).status, 403);
+
+  const listed = await request(app, clipsPath);
+  assert.equal(listed.status, 200);
+  assert.deepEqual(
+    new Set(listed.body.map(clip => clip.id)),
+    new Set([textClip.body.id, fileClip.body.id]),
+  );
+});
+
 test('bulk delete is atomic, respects locks and limits, and reclaims file bytes', async (t) => {
   const app = await startApp(t, { MAX_BULK_DELETE: '3' });
   const defaultLock = await jsonRequest(app, '/api/boards/default', 'PUT', { locked: true });

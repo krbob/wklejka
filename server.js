@@ -372,8 +372,6 @@ function assertCanAddBoard(candidateStore = store) {
 function assertCanAddClip(candidateStore, boardId, additionalBytes = 0, storageBytes = storedBinaryBytes) {
   const boardClips = candidateStore.clips[boardId];
   if (!boardClips) throw httpError(404, 'Board not found', 'BOARD_NOT_FOUND');
-  const board = candidateStore.boards.find(candidate => candidate.id === boardId);
-  if (board?.locked) throw httpError(403, 'Board is locked', 'BOARD_LOCKED');
   if (boardClips.length >= MAX_CLIPS_PER_BOARD) {
     throw httpError(409, `Clip limit reached for this board (max ${MAX_CLIPS_PER_BOARD})`, 'CLIP_LIMIT_REACHED');
   }
@@ -1221,7 +1219,7 @@ app.post('/api/boards/:id/uploads', async (req, res) => {
     }
 
     await commitStoreMutation((draft, context) => {
-      // Recheck mutable quotas and lock state after a potentially long upload.
+      // Recheck mutable quotas after a potentially long upload.
       // The current stream is already included in activeUploadBytes.
       assertCanAddClip(draft, boardId, 0, context.storedBinaryBytes);
       draft.clips[boardId].unshift(clip);

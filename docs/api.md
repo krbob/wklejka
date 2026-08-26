@@ -63,7 +63,7 @@ A board resembles:
 | `PUT /api/boards/:id` | Any non-empty subset of `name` and Boolean `locked`. The default board cannot be locked. |
 | `DELETE /api/boards/:id` | Delete a non-default, unlocked board and its media. |
 
-A board lock protects clip creation/update/deletion and board deletion. It can still be unlocked or renamed through the board endpoint, and expiry/retention can remove content. Treat it as accidental-change protection, not access control.
+A board lock protects existing clips from updates/deletion and protects the board from deletion, while still allowing new clips to be added. It can still be unlocked or renamed through the board endpoint, and expiry/retention can remove content. Treat it as accidental-change protection, not access control.
 
 ## Listing and searching clips
 
@@ -128,7 +128,7 @@ curl --fail --show-error \
   https://clipboard.example.net/api/boards/default/uploads
 ```
 
-The response is the created clip. Uploads enforce per-clip, board/total-count, aggregate-storage, and lock limits while streaming and again before commit.
+The response is the created clip. Uploads enforce per-clip, board/total-count, and aggregate-storage limits while streaming and again before commit. Locked boards still accept new uploads.
 
 ## Updating and deleting clips
 

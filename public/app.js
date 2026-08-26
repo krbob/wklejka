@@ -692,8 +692,8 @@ function renderBoardSummary() {
   const name = board.id === 'default' ? t('defaultBoard') : board.name;
   $('#board-heading').textContent = name;
   const locked = !!board.locked;
-  $('#text-input').readOnly = locked;
-  $('#text-input').placeholder = locked ? t('boardLocked') : t('placeholder');
+  $('#text-input').readOnly = false;
+  $('#text-input').placeholder = t('placeholder');
   updateComposerState();
   if (locked && selectionMode) {
     selectionMode = false;
@@ -719,11 +719,10 @@ function renderBoardSummary() {
 
 function updateComposerState() {
   const board = boards.find(item => item.id === currentBoardId);
-  const locked = !!board?.locked;
   const online = navigator.onLine;
   const hasText = !!$('#text-input').value.trim();
-  $('#send-btn').disabled = locked || !online || !hasText || textSendInFlightBoards.has(currentBoardId);
-  $('#file-btn').disabled = locked || !online || !board;
+  $('#send-btn').disabled = !online || !hasText || textSendInFlightBoards.has(currentBoardId);
+  $('#file-btn').disabled = !online || !board;
   const hint = $('#composer-hint');
   hint.textContent = online ? t('hint') : t('draftOffline');
   hint.dataset.mode = online ? 'shortcut' : 'offline';
@@ -1120,10 +1119,6 @@ function uploadBlob(blob, type, originalName, boardId = currentBoardId) {
   if (!blob || !boardId) return;
   if (!navigator.onLine) {
     showToast(t('offline'));
-    return;
-  }
-  if (boards.find(board => board.id === boardId)?.locked) {
-    showToast(t('boardLocked'));
     return;
   }
   const task = {
@@ -2205,8 +2200,7 @@ async function sendText() {
   const textarea = $('#text-input');
   const boardId = currentBoardId;
   if (!navigator.onLine
-    || textSendInFlightBoards.has(boardId)
-    || boards.find(board => board.id === boardId)?.locked) return;
+    || textSendInFlightBoards.has(boardId)) return;
   const text = textarea.value;
   if (!text.trim()) return;
   saveDraft(boardId, text);

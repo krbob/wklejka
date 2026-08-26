@@ -55,7 +55,7 @@ Clipboard contents are often sensitive. For phone, tablet, LAN, VPN, or Internet
 
 Use the tracked [production Compose file](compose.prod.yaml) with [.env.example](.env.example), then follow the [secure deployment guide](docs/deployment.md) for proxy and TLS configuration. Browsers restrict clipboard access, notifications, and service workers on insecure non-localhost origins.
 
-Wklejka is intended for a trusted household or small team, not mutually untrusted tenants. It has no user-account database: Basic or token authentication protects the whole deployment with a shared credential. Board locks prevent accidental mutations; they are not an authorization boundary.
+Wklejka is intended for a trusted household or small team, not mutually untrusted tenants. It has no user-account database: Basic or token authentication protects the whole deployment with a shared credential. Board locks prevent accidental edits and deletions while still allowing new clips; they are not an authorization boundary.
 
 ## Essential configuration
 
