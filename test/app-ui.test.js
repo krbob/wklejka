@@ -518,6 +518,48 @@ test('clip actions stay in the compact action row for every clip type', async (t
   }
 });
 
+test('resume sync keeps rendered clips visible until refreshed data arrives', async (t) => {
+  const refresh = createDeferred();
+  let clipRequests = 0;
+  const original = {
+    id: 'existing',
+    type: 'text',
+    content: 'Widoczny przed odświeżeniem',
+    createdAt: Date.now() - 60_000,
+  };
+  const app = await bootApp({
+    clips: [original],
+    async handleRequest(call) {
+      if (call.method !== 'GET' || call.url.pathname !== '/api/boards/default/clips') return null;
+      clipRequests++;
+      if (clipRequests !== 2) return null;
+      await refresh.promise;
+      return jsonResponse({
+        items: [{ ...original, content: 'Odświeżona treść' }],
+        total: 1,
+        nextCursor: null,
+      });
+    },
+  });
+  t.after(app.close);
+
+  const realNow = app.window.Date.now;
+  app.window.Date.now = () => realNow() + 2_000;
+  app.window.dispatchEvent(new app.window.Event('focus'));
+  await waitFor(() => clipRequests === 2, 'pending resume refresh');
+
+  assert.match(app.document.querySelector('#clips')?.textContent || '', /Widoczny przed odświeżeniem/);
+  assert.doesNotMatch(app.document.querySelector('#clips')?.textContent || '', /Ładowanie wpisów/);
+  assert.equal(app.document.querySelector('#clips')?.getAttribute('aria-busy'), 'true');
+
+  refresh.resolve();
+  await waitFor(
+    () => /Odświeżona treść/.test(app.document.querySelector('#clips')?.textContent || '')
+      && app.document.querySelector('#clips')?.getAttribute('aria-busy') === 'false',
+    'completed resume refresh',
+  );
+});
+
 test('link and file preview controls perform their actions and ignore non-page URLs', async (t) => {
   const app = await bootApp({
     clips: [

@@ -504,6 +504,7 @@ let syncQueued = false;
 let lastSyncAt = 0;
 let clipStateVersion = 0;
 let loadClipsRequestId = 0;
+let loadedClipsQueryKey = null;
 const unreadCounts = {};
 let hiddenClipCount = 0;
 let isDraggingTab = false;
@@ -583,6 +584,7 @@ function selectBoard(boardId, { clearHash = true, scrollToTop = true } = {}) {
   setSelectionMode(false);
   currentBoardId = boardId;
   clips = [];
+  loadedClipsQueryKey = null;
   totalClips = 0;
   nextClipsCursor = null;
   restoreDraft(boardId);
@@ -855,19 +857,23 @@ async function loadClips(boardId = currentBoardId, { append = false } = {}) {
   const version = clipStateVersion;
   const cursor = append ? nextClipsCursor : null;
   if (append && !cursor) return 0;
+  const queryKey = clipsQueryKey(boardId);
+  const canKeepCurrentView = !append && loadedClipsQueryKey === queryKey;
   if (!append) {
-    clips = [];
-    totalClips = 0;
-    nextClipsCursor = null;
     selectionMode = false;
     selectedClipIds.clear();
+    if (!canKeepCurrentView) {
+      clips = [];
+      loadedClipsQueryKey = null;
+      totalClips = 0;
+      nextClipsCursor = null;
+    }
   }
-  const queryKey = clipsQueryKey(boardId);
   const container = $('#clips');
   container.setAttribute('aria-busy', 'true');
   clipsLoadingMore = append;
   renderPagination();
-  if (!append && boardId === currentBoardId) {
+  if (!append && !canKeepCurrentView && boardId === currentBoardId) {
     const loading = document.createElement('li');
     loading.className = 'empty-state';
     loading.textContent = t('loadingClips');
@@ -881,6 +887,7 @@ async function loadClips(boardId = currentBoardId, { append = false } = {}) {
     const existingIds = new Set(append ? clips.map(clip => clip.id) : []);
     const newItems = page.items.filter(clip => !existingIds.has(clip.id));
     clips = append ? [...clips, ...newItems] : newItems;
+    loadedClipsQueryKey = queryKey;
     nextClipsCursor = page.nextCursor || null;
     totalClips = Number.isSafeInteger(page.total) ? page.total : clips.length;
     initialClipsLoaded = true;
@@ -891,7 +898,8 @@ async function loadClips(boardId = currentBoardId, { append = false } = {}) {
     if (append && newItems.length) announce(t('loadedMore', { count: newItems.length }));
     return newItems.length;
   } catch (error) {
-    if (!append && requestId === loadClipsRequestId && boardId === currentBoardId) {
+    if (!append && !canKeepCurrentView
+      && requestId === loadClipsRequestId && boardId === currentBoardId) {
       renderClipLoadError(error.message);
     }
     throw error;
