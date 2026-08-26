@@ -225,10 +225,14 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}")
           [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
 
-          # Adding a new clip and deleting the existing one are both forbidden.
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${base}/api/boards/${ID_A}/clips" \
+          # Adding a new clip is allowed while updates and deletions remain forbidden.
+          curl -fsS -X POST "${base}/api/boards/${ID_A}/clips" \
             -H 'Content-Type: application/json' \
-            -d '{"type":"text","content":"must be rejected"}')
+            -d '{"type":"text","content":"added after locking"}' | grep -q '"added after locking"'
+
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "${base}/api/boards/${ID_A}/clips/${CLIP_ID}" \
+            -H 'Content-Type: application/json' \
+            -d '{"content":"must be rejected"}')
           [ "$HTTP_CODE" = "403" ] || { echo "Expected 403, got $HTTP_CODE"; exit 1; }
 
           HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "${base}/api/boards/${ID_A}/clips/${CLIP_ID}")
