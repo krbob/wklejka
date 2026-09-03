@@ -34,12 +34,12 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/jsdom": "28.0.3",
+    "@types/jsdom": "30.0.0",
     "@types/node": "24.13.3",
     "@types/proxy-addr": "2.0.3",
     "eslint": "10.9.1",
     "globals": "17.11.0",
-    "jsdom": "29.1.1",
+    "jsdom": "30.0.1",
     "typescript": "5.9.3"
   }
 }
