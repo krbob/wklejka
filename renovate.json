@@ -1,25 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "github>krbob/renovate-config:monthly"
   ],
-  "timezone": "Europe/Warsaw",
-  "dependencyDashboard": true,
-  "schedule": [
-    "after 2am and before 5am on monday"
-  ],
-  "automergeSchedule": [
-    "after 2am and before 5am on monday"
-  ],
-  "updateNotScheduled": false,
-  "rebaseWhen": "behind-base-branch",
-  "platformAutomerge": true,
-  "prConcurrentLimit": 5,
-  "branchConcurrentLimit": 5,
-  "prHourlyLimit": 2,
-  "lockFileMaintenance": {
-    "enabled": true
-  },
   "packageRules": [
     {
       "description": "Group non-major npm dependency updates",
@@ -60,45 +43,6 @@
         "pin"
       ],
       "groupName": "Docker images"
-    },
-    {
-      "description": "Automerge low-risk updates only after CI",
-      "matchUpdateTypes": [
-        "patch",
-        "digest",
-        "pin",
-        "lockFileMaintenance"
-      ],
-      "automerge": true,
-      "automergeType": "pr",
-      "minimumReleaseAge": "3 days"
-    },
-    {
-      "description": "Require manual review for major, replacement, rollback, and minor updates",
-      "matchUpdateTypes": [
-        "major",
-        "replacement",
-        "rollback",
-        "minor"
-      ],
-      "automerge": false
-    },
-    {
-      "description": "Never automerge dependencies that use a floating latest tag",
-      "matchCurrentValue": "latest",
-      "automerge": false
-    },
-    {
-      "description": "Refresh the npm lockfile monthly",
-      "matchManagers": [
-        "npm"
-      ],
-      "matchUpdateTypes": [
-        "lockFileMaintenance"
-      ],
-      "schedule": [
-        "before 5am on the first day of the month"
-      ]
     }
   ]
 }
