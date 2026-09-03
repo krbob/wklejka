@@ -17,7 +17,7 @@
     "node": ">=24 <27",
     "npm": ">=11"
   },
-  "packageManager": "npm@11.7.0",
+  "packageManager": "npm@11.19.1",
   "scripts": {
     "start": "node server.js",
     "test": "node --test --test-timeout=15000",
@@ -37,8 +37,8 @@
     "@types/jsdom": "28.0.3",
     "@types/node": "24.13.3",
     "@types/proxy-addr": "2.0.3",
-    "eslint": "10.7.0",
-    "globals": "17.7.0",
+    "eslint": "10.9.1",
+    "globals": "17.11.0",
     "jsdom": "29.1.1",
     "typescript": "5.9.3"
   }
