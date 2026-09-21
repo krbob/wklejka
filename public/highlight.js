@@ -19,7 +19,8 @@
     const source = String(text);
     const lines = source.split('\n');
     return /```|<\/?[a-z][\s\S]*>|[{};]/i.test(source)
-      || /\b(function|const|let|var|return|class|import|export|async|await|def|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE)\b/.test(source)
+      || /^\s*(?:(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+\w*\s*\(|(?:export\s+)?(?:const|let|var)\s+\w+\s*=|(?:export\s+(?:default\s+)?)?class\s+\w+\s*(?:extends\s+\w+\s*)?\{|(?:async\s+)?def\s+\w+\s*\([^\n]*\)\s*:|import\s+(?:["']|.+\s+from\s+["'])|from\s+[\w.]+\s+import\s+\w|export\s+(?:default\s+\S|\w+=))/m.test(source)
+      || /\b(?:SELECT\s+.+\s+FROM\s+\w|INSERT\s+INTO\s+\w|UPDATE\s+\w+\s+SET\b|DELETE\s+FROM\s+\w|CREATE\s+TABLE\s+\w)/i.test(source)
       || lines.filter(line => /^\s{2,}\S/.test(line)).length >= 2;
   }
 

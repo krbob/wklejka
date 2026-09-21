@@ -58,6 +58,35 @@ test('looksLikeCode detects common code snippets', () => {
   assert.equal(looksLikeCode('plain note without code markers'), false);
 });
 
+test('ordinary words do not enable code highlighting for prose', () => {
+  for (const word of ['export', 'import', 'return', 'class', 'async', 'await', 'def', 'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE', 'CREATE']) {
+    const source = `Notatka: 6 pozycji ${word}\nDo sprawdzenia jutro`;
+    assert.deepEqual(highlightedTextWithLinks(source), { html: source, asCode: false });
+  }
+});
+
+test('keywords with code syntax still enable highlighting', () => {
+  for (const source of [
+    'const answer = 42',
+    'export const answer = 6',
+    'export default 6',
+    'export PORT=3000',
+    'function answer()',
+    'async function answer()',
+    'def answer():\n    return 6',
+    'import "module"',
+    'import thing from "module"',
+    'from pathlib import Path',
+    'SELECT count(*) FROM clips',
+    'insert into clips values (6)',
+    'UPDATE clips SET content = 6',
+    'DELETE FROM clips',
+    'CREATE TABLE clips (id int)',
+  ]) {
+    assert.equal(looksLikeCode(source), true, source);
+  }
+});
+
 test('highlight helpers coerce non-string input safely', () => {
   assert.equal(highlightPlainSegment(42, false), '42');
   assert.equal(looksLikeCode(null), false);
