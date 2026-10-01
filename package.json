@@ -17,7 +17,7 @@
     "node": ">=24 <27",
     "npm": ">=11"
   },
-  "packageManager": "npm@11.20.0",
+  "packageManager": "npm@12.1.0",
   "scripts": {
     "start": "node server.js",
     "test": "node --test --test-timeout=15000",
