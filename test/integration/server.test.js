@@ -20,7 +20,7 @@ async function freePort() {
   const probe = net.createServer();
   await new Promise((resolve, reject) => {
     probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => resolve());
+    probe.listen(0, '127.0.0.1', () => resolve(undefined));
   });
   const address = probe.address();
   const port = typeof address === 'object' && address ? address.port : null;
@@ -231,7 +231,7 @@ function chunkedUpload(app, chunks, headers = {}) {
 }
 
 /**
- * @param {object} app
+ * @param {{ port: number }} app
  * @param {{ authorization?: string, host?: string, origin?: string, pathname?: string }} options
  */
 function rawWebSocketUpgrade(app, {
