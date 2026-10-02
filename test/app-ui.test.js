@@ -234,7 +234,7 @@ test('clip expiry requires an explicit new deadline', async (t) => {
     () => !app.document.querySelector('#clip-expiry-modal')?.hasAttribute('open'),
     'expiry dialog close',
   );
-  await new Promise(resolve => app.window.requestAnimationFrame(() => resolve()));
+  await new Promise(resolve => app.window.requestAnimationFrame(() => resolve(undefined)));
   assert.equal(app.document.activeElement, app.document.querySelector('button[data-action="expiry"]'));
 });
 
