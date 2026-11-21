@@ -49,6 +49,30 @@ Open <http://localhost:3000>. Stop the foreground container with `Ctrl+C`; the n
 
 This command deliberately binds only to loopback and is for local use. The floating `latest` tag is convenient for evaluation but is not immutable.
 
+### Apple container on macOS
+
+On Apple silicon, create a volume and give the image's application user ownership of its mount point once:
+
+```bash
+container system start
+container volume create wklejka-data
+container run --rm --user 0:0 --entrypoint /bin/chown -v wklejka-data:/app/data \
+  ghcr.io/krbob/wklejka:latest 1000:1000 /app/data
+```
+
+Start a local evaluation instance and check that the store is ready:
+
+```bash
+container run -d --rm --name wklejka --init --read-only --cap-drop ALL \
+  --tmpfs /tmp:rw,noexec,nosuid,size=16M,mode=1777 -v wklejka-data:/app/data -p 127.0.0.1:3000:3000 \
+  ghcr.io/krbob/wklejka:latest
+curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:3000/readyz
+```
+
+Open <http://localhost:3000> and add a clip. Use `container stop --time 10 wklejka` for a graceful shutdown.
+Repeat the start command with the same volume to reopen the board. Apple `container` manages this volume
+separately from Docker Desktop.
+
 ## Secure access from other devices
 
 Clipboard contents are often sensitive. For phone, tablet, LAN, VPN, or Internet access, deploy one instance behind HTTPS, enable authentication, keep the raw application port private, and pin a tested `sha-*` tag or manifest digest.
