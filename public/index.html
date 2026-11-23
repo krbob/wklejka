@@ -2,7 +2,7 @@
 <html lang="pl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=contain">
   <title>Wklejka</title>
 
   <!-- PWA -->
@@ -10,7 +10,6 @@
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1e293b" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Wklejka">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 
@@ -18,6 +17,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="pwa-status-bar" aria-hidden="true"></div>
   <a class="skip-link" href="#main-content">Przejdź do treści</a>
   <header class="app-header">
     <div class="header-left">
